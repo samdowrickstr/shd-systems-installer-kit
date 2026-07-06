@@ -1,0 +1,8 @@
+<RCC>
+    <qresource prefix="/setup">
+        <file alias="config.json">config.json</file>
+        <file alias="logo.svg">logo.svg</file>
+        <file alias="check.svg">check.svg</file>
+        <file alias="app.ico">app.ico</file>
+    </qresource>
+</RCC>

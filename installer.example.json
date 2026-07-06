@@ -1,0 +1,59 @@
+{
+  "//": "Packing config for STR-Installer-Kit. Copy to installer.json, edit, then run pack.ps1.",
+  "//paths": "All relative paths are resolved against THIS file's folder.",
+
+  "product": {
+    "appName": "STR ROTV Dash",
+    "displayName": "ROTV Dash",
+    "subtitle": "SETUP",
+    "publisher": "Subsea Technology and Rentals Ltd",
+    "registryKey": "StrRotvDash",
+    "accentColor": "#1CA3C2",
+    "logo": "../RD178 - ROTV Dash/installer/StrLogo.svg",
+    "icon": "../RD178 - ROTV Dash/installer/app.ico"
+  },
+
+  "version": {
+    "//": "Use 'file' to read version.txt, or 'literal' for a fixed string.",
+    "file": "../RD178 - ROTV Dash/str-dashboard/version.txt",
+    "literal": "",
+    "appendBuildMetadata": true
+  },
+
+  "apps": [
+    {
+      "exe": "rd178-dash.exe",
+      "name": "STR ROTV Dashboard",
+      "description": "monitor the topside unit",
+      "default": true,
+      "qmlDir": "../RD178 - ROTV Dash/str-dashboard/qml"
+    },
+    {
+      "exe": "str-pilot.exe",
+      "name": "STR ROTV Pilot",
+      "description": "fly the ROTV",
+      "default": true,
+      "qmlDir": "../RD178 - ROTV Dash/str-pilot/qml"
+    }
+  ],
+
+  "payload": {
+    "//sources": "Files/folders copied into the bundle (your already-built exes + data).",
+    "sources": [
+      "../RD178 - ROTV Dash/build/str-dashboard/rd178-dash.exe",
+      "../RD178 - ROTV Dash/build/str-pilot/str-pilot.exe"
+    ],
+    "windeployqt": true
+  },
+
+  "qt": {
+    "dir": "D:/Qt/6.8.3/mingw_64",
+    "mingw": "D:/Qt/Tools/mingw1310_64/bin"
+  },
+
+  "output": {
+    "namePrefix": "STR-ROTV-Dash",
+    "distDir": "dist",
+    "portableZip": true
+  }
+}

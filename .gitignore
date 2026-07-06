@@ -1,0 +1,15 @@
+# Build output
+build/
+dist/
+
+# Generated per-project runtime config + branding (produced by pack.ps1).
+# Keep the examples; ignore the working copies.
+installer.json
+resources/config.json
+
+# Editor / OS cruft
+.vs/
+.vscode/
+*.user
+Thumbs.db
+.DS_Store
