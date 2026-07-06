@@ -45,10 +45,14 @@ every project.
 
 ## Quick start
 
+Run from a **Windows PowerShell** prompt in the repo folder (use the `.\` prefix).
+If scripts are blocked by execution policy, prefix with
+`powershell -ExecutionPolicy Bypass -File`.
+
 1. Configure a project interactively:
 
    ```powershell
-   pwsh configure.ps1
+   .\configure.ps1
    ```
 
    It asks for the product name, version, logo (`.svg`), icon (`.ico`), the app
@@ -57,7 +61,7 @@ every project.
 2. Build the installer:
 
    ```powershell
-   pwsh pack.ps1
+   .\pack.ps1
    ```
 
    Outputs to the configured `dist/` folder:
@@ -66,7 +70,7 @@ every project.
    - `<Prefix>-v<version>-portable.zip` — the app only (optional)
 
 Prefer to edit config by hand? Copy `installer.example.json` to `installer.json`
-and adjust it, then run `pack.ps1`.
+and adjust it, then run `.\pack.ps1`.
 
 ## `installer.json`
 

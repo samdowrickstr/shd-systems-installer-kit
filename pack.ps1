@@ -1,12 +1,12 @@
-# pack.ps1 — PlannerDay Installer Kit packager.
+# pack.ps1 - PlannerDay Installer Kit packager.
 #
 # Reads a project's installer.json, embeds its runtime config + branding into the
 # generic AppSetup.exe, stages the payload (your already-built app exes + the Qt
 # runtime), and produces ONE self-contained Installer.exe (a native Win32 stub
 # with the whole bundle embedded as a tar.gz), plus an optional portable .zip.
 #
-#   pwsh pack.ps1                       # uses ./installer.json
-#   pwsh pack.ps1 -Config path.json     # explicit config
+#   .\pack.ps1                       # uses ./installer.json
+#   .\pack.ps1 -Config path.json     # explicit config
 #
 # windeployqt prints harmless warnings to stderr; don't let them abort the run.
 param(
@@ -69,7 +69,7 @@ $logo = Resolve-CfgPath $cfg.product.logo
 $icon = Resolve-CfgPath $cfg.product.icon
 if ($logo) {
     if ([System.IO.Path]::GetExtension($logo).ToLower() -ne ".svg") {
-        Write-Warning "Logo should be an .svg — got '$logo'. Using it anyway as logo.svg."
+        Write-Warning "Logo should be an .svg - got '$logo'. Using it anyway as logo.svg."
     }
     Copy-Item -LiteralPath $logo -Destination (Join-Path $res "logo.svg") -Force
 }
@@ -77,7 +77,7 @@ if ($icon) {
     Copy-Item -LiteralPath $icon -Destination (Join-Path $res "app.ico") -Force
 }
 if (-not (Test-Path -LiteralPath (Join-Path $res "app.ico"))) {
-    throw "resources/app.ico missing — set product.icon in installer.json"
+    throw "resources/app.ico missing - set product.icon in installer.json"
 }
 
 # Runtime config.json (only the fields the GUI reads at runtime).

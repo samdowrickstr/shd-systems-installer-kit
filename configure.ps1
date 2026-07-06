@@ -1,11 +1,11 @@
-# configure.ps1 — PlannerDay Installer Kit setup wizard.
+# configure.ps1 - PlannerDay Installer Kit setup wizard.
 #
 # Interactively builds an installer.json for a new project: product name,
 # version, logo/icon, the app binaries to bundle and the Qt toolchain paths.
-# When done, run  pwsh pack.ps1  to produce the installer.
+# When done, run  .\pack.ps1  to produce the installer.
 #
-#   pwsh configure.ps1                    # writes ./installer.json
-#   pwsh configure.ps1 -Output foo.json   # write elsewhere
+#   .\configure.ps1                    # writes ./installer.json
+#   .\configure.ps1 -Output foo.json   # write elsewhere
 param(
     [string]$Output = "installer.json"
 )
@@ -25,11 +25,11 @@ function AskYesNo([string]$prompt, [bool]$default = $true) {
 }
 
 Write-Host ""
-Write-Host "PlannerDay Installer Kit — setup wizard" -ForegroundColor Cyan
+Write-Host "PlannerDay Installer Kit - setup wizard" -ForegroundColor Cyan
 Write-Host "Answer the prompts; press Enter to accept the [default]." -ForegroundColor DarkGray
 Write-Host ""
 
-Write-Host "── Product ──────────────────────────────" -ForegroundColor Cyan
+Write-Host "--- Product ---------------------------------" -ForegroundColor Cyan
 $appName     = Ask "Product name (install folder, Add/Remove entry)"
 while (-not $appName) { $appName = Ask "Product name (required)" }
 $displayName = Ask "Display name shown in the header" $appName
@@ -42,14 +42,14 @@ $logo        = Ask "Path to logo (.svg)"
 $icon        = Ask "Path to app icon (.ico)"
 
 Write-Host ""
-Write-Host "── Version ──────────────────────────────" -ForegroundColor Cyan
+Write-Host "--- Version ---------------------------------" -ForegroundColor Cyan
 $verFile = Ask "Path to version.txt (blank to type a literal version)"
 $verLit  = ""
 if (-not $verFile) { $verLit = Ask "Version string (e.g. 1.0.0)" "1.0.0" }
 $appendMeta = AskYesNo "Append +build.<timestamp> metadata?" $true
 
 Write-Host ""
-Write-Host "── Apps to bundle ───────────────────────" -ForegroundColor Cyan
+Write-Host "--- Apps to bundle --------------------------" -ForegroundColor Cyan
 Write-Host "Add each application. Leave the exe name blank to finish." -ForegroundColor DarkGray
 $apps = @()
 while ($true) {
@@ -63,10 +63,10 @@ while ($true) {
     if ($qml) { $app.qmlDir = $qml }
     $apps += $app
 }
-if ($apps.Count -eq 0) { throw "No apps configured — at least one is required." }
+if ($apps.Count -eq 0) { throw "No apps configured - at least one is required." }
 
 Write-Host ""
-Write-Host "── Payload (already-built binaries) ─────" -ForegroundColor Cyan
+Write-Host "--- Payload (already-built binaries) --------" -ForegroundColor Cyan
 Write-Host "List files/folders to copy into the bundle. Blank line to finish." -ForegroundColor DarkGray
 $sources = @()
 while ($true) {
@@ -75,17 +75,17 @@ while ($true) {
     $sources += $src
 }
 if ($sources.Count -eq 0) {
-    Write-Warning "No payload sources given — remember to add your built exes to installer.json."
+    Write-Warning "No payload sources given - remember to add your built exes to installer.json."
 }
 $deploy = AskYesNo "Run windeployqt to bundle the Qt runtime?" $true
 
 Write-Host ""
-Write-Host "── Qt toolchain ─────────────────────────" -ForegroundColor Cyan
+Write-Host "--- Qt toolchain ----------------------------" -ForegroundColor Cyan
 $qtDir  = Ask "Qt kit dir (mingw)" "D:/Qt/6.8.3/mingw_64"
 $mingw  = Ask "MinGW bin dir" "D:/Qt/Tools/mingw1310_64/bin"
 
 Write-Host ""
-Write-Host "── Output ───────────────────────────────" -ForegroundColor Cyan
+Write-Host "--- Output ----------------------------------" -ForegroundColor Cyan
 $prefix   = Ask "Installer file name prefix" ($appName -replace '\s+','-')
 $distDir  = Ask "Output folder" "dist"
 $portable = AskYesNo "Also build a portable .zip?" $true
@@ -116,4 +116,4 @@ $installer | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $outPath -Encodi
 
 Write-Host ""
 Write-Host "Wrote $outPath" -ForegroundColor Green
-Write-Host "Review it, then run:  pwsh pack.ps1 -Config `"$outPath`"" -ForegroundColor Green
+Write-Host "Review it, then run:  .\pack.ps1 -Config `"$outPath`"" -ForegroundColor Green
