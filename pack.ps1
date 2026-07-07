@@ -87,6 +87,58 @@ function Copy-NativeDependencies {
     if ($copied.Count) { Write-Host ("        bundled {0} dependency dll(s): {1}" -f $copied.Count, ($copied -join ', ')) }
 }
 
+# --- Authenticode signing ---------------------------------------------------
+# Locate signtool.exe: explicit config path, then PATH, then newest Windows SDK.
+$script:SignToolPath = $null
+function Get-SignTool([string]$explicit) {
+    if ($script:SignToolPath) { return $script:SignToolPath }
+    $cand = @()
+    if ($explicit) { $cand += (Resolve-CfgPath $explicit) }
+    $cmd = Get-Command signtool.exe -ErrorAction SilentlyContinue
+    if ($cmd) { $cand += $cmd.Source }
+    foreach ($k in @("${env:ProgramFiles(x86)}\Windows Kits\10\bin", "$env:ProgramFiles\Windows Kits\10\bin")) {
+        if (Test-Path -LiteralPath $k) {
+            Get-ChildItem -LiteralPath $k -Directory -ErrorAction SilentlyContinue |
+                Sort-Object Name -Descending | ForEach-Object {
+                    $p = Join-Path $_.FullName 'x64\signtool.exe'
+                    if (Test-Path -LiteralPath $p) { $cand += $p }
+                }
+        }
+    }
+    foreach ($c in $cand) { if ($c -and (Test-Path -LiteralPath $c)) { $script:SignToolPath = $c; return $c } }
+    throw "signtool.exe not found. Install the Windows 10/11 SDK, or set signing.signtool in installer.json."
+}
+
+# Sign one file with signtool using the JSON signing config. Password (if any)
+# is read from the environment variable named by signing.certPasswordEnv - never
+# stored in installer.json.
+function Invoke-SignFile {
+    param([object]$Sign, [string]$File)
+    $tool = Get-SignTool $Sign.signtool
+    $args = @('sign', '/fd', 'SHA256')
+    if ($Sign.timestampUrl) { $args += @('/tr', $Sign.timestampUrl, '/td', 'SHA256') }
+    if ($Sign.thumbprint) {
+        $args += @('/sha1', $Sign.thumbprint)
+    } elseif ($Sign.certFile) {
+        $cf = Resolve-CfgPath $Sign.certFile
+        if (-not (Test-Path -LiteralPath $cf)) { throw "signing cert not found: $cf" }
+        $args += @('/f', $cf)
+        if ($Sign.certPasswordEnv) {
+            $pw = [Environment]::GetEnvironmentVariable($Sign.certPasswordEnv)
+            if ($pw) { $args += @('/p', $pw) }
+            else { Write-Warning "env var '$($Sign.certPasswordEnv)' is empty; signing may prompt or fail." }
+        }
+    } else {
+        throw "signing.enabled is true but neither signing.certFile nor signing.thumbprint is set."
+    }
+    $args += $File
+    & $tool @args
+    if ($LASTEXITCODE -ne 0) { throw "signtool failed for $File (exit $LASTEXITCODE)" }
+}
+
+$signing = $cfg.signing
+$doSign  = ($signing -and ($signing.enabled -eq $true))
+
 # --- Qt / MinGW toolchain ---------------------------------------------------
 $qt    = $cfg.qt.dir
 $mingw = $cfg.qt.mingw
@@ -224,6 +276,14 @@ if ($cfg.payload.autoBundleDlls -eq $true) {
     Copy-NativeDependencies -Roots $roots -DestDir $stage -SearchDirs $searchDirs -Objdump (Join-Path $mingw "objdump.exe")
 }
 
+# Sign the payload executables before they are packed into the installer.
+if ($doSign -and ($signing.signPayload -eq $true)) {
+    Write-Host "        Signing payload executables..."
+    Get-ChildItem -LiteralPath $stage -Filter *.exe | ForEach-Object {
+        Invoke-SignFile $signing $_.FullName
+    }
+}
+
 Write-Host "[4/7] Archiving payload (tar.gz preserves folders)..."
 $zip = Join-Path $build "payload.tgz"
 if (Test-Path $zip) { Remove-Item $zip -Force }
@@ -261,6 +321,13 @@ if (Test-Path $out) { Remove-Item $out -Force }
     -DUNICODE -D_UNICODE -O2 -s -mwindows -static -static-libgcc -static-libstdc++ `
     -o $out
 Copy-Item -LiteralPath $out -Destination $latestOut -Force
+
+# Sign the final self-contained installer (and its 'latest' alias).
+if ($doSign) {
+    Write-Host "        Signing installer..."
+    Invoke-SignFile $signing $out
+    Invoke-SignFile $signing $latestOut
+}
 
 $makePortable = -not ($cfg.output.portableZip -eq $false)
 $portZip = $null

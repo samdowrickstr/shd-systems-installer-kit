@@ -92,6 +92,10 @@ and adjust it, then run `.\pack.ps1`.
 | `payload.dllSearchDirs[]` | Extra folders to resolve DLLs from when `autoBundleDlls` is on. |
 | `qt.dir` / `qt.mingw` | Qt kit and MinGW `bin` paths (also used as DLL search dirs). |
 | `output.namePrefix` / `distDir` / `portableZip` | Output naming + options. |
+| `signing.enabled` | Authenticode-sign the installer (and payload) with `signtool`. |
+| `signing.certFile` / `certPasswordEnv` | `.pfx` path + the **env var** holding its password. |
+| `signing.thumbprint` | Alternative to `certFile`: use a cert from the Windows store. |
+| `signing.timestampUrl` / `signPayload` / `signtool` | RFC-3161 timestamp URL; sign app exes too; optional signtool path. |
 
 All relative paths are resolved against the folder containing `installer.json`.
 
@@ -141,11 +145,18 @@ Azure Pipelines job on a Windows runner.
 
 ## Optional hardening
 
-- **Code signing** - Windows SmartScreen warns on unsigned installers. Sign the
-  generated `Installer.exe` (and ideally each payload exe) with `signtool sign
-  /fd SHA256 /tr <timestamp-url> /td SHA256 /f cert.pfx Installer.exe`.
-- **CI releases** - wire `pack.ps1` into GitHub Actions to attach the installer
-  to each tagged release automatically.
+- **Code signing** - Windows SmartScreen warns on unsigned installers. Set
+  `signing.enabled: true` in `installer.json` and point `signing.certFile` at a
+  `.pfx` (put its password in the env var named by `signing.certPasswordEnv` -
+  never in the JSON), or use `signing.thumbprint` for a cert already in your
+  Windows store. `pack.ps1` then signs the payload exes and the final
+  `Installer.exe` with `signtool` (from the Windows 10/11 SDK), timestamped via
+  `signing.timestampUrl`.
+- **CI releases** - `examples/release.yml` is a ready-to-copy GitHub Actions
+  workflow: on every `v*` tag it installs Qt, builds your app, packs a (signed)
+  installer, and attaches the `Installer.exe` to the GitHub Release. Copy it
+  into your app repo as `.github/workflows/release.yml` and add the
+  `CERT_PFX_BASE64` / `CERT_PASSWORD` secrets for signing.
 
 ## Layout
 
@@ -153,8 +164,7 @@ Azure Pipelines job on a Windows runner.
 - `src/main.cpp`, `src/setupwindow.{h,cpp}` — the config-driven Qt setup GUI.
 - `resources/` — `setup.qrc`, `logo.svg`, `check.svg`, `app.ico`, manifest, `.rc`.
 - `CMakeLists.txt` — builds `AppSetup.exe`.
-- `configure.ps1` — the setup wizard. `pack.ps1` — the packager.
-
+- `configure.ps1` — the setup wizard. `pack.ps1` — the packager.- `examples/release.yml` - GitHub Actions release workflow template.
 ## Licence & attribution
 
 © 2026 PlannerDay Ltd. Licensed under the MIT Licence. You may use, modify and

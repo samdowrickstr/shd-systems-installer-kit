@@ -1,0 +1,84 @@
+# GitHub Actions release workflow (TEMPLATE)
+# ------------------------------------------------------------------------------
+# Copy this into YOUR APPLICATION repo as .github/workflows/release.yml.
+# On every pushed tag like v1.2.3 it builds your app, packs a signed installer
+# with the PlannerDay Installer Kit, and attaches the Installer.exe to the
+# GitHub Release for that tag.
+#
+# Assumptions (adjust to your project):
+#   - Your app is a Qt 6 / MinGW app built with CMake.
+#   - This repo contains an installer.json at its root (see installer.example.json).
+#   - The kit lives at https://github.com/samdowrickstr/plannerday-installer-kit
+#
+# Optional code signing: add repository secrets
+#   CERT_PFX_BASE64  -> base64 of your .pfx  (certutil -encode / [Convert]::ToBase64String)
+#   CERT_PASSWORD    -> the .pfx password
+# and set "signing.enabled": true in installer.json (leave certFile blank; the
+# workflow writes the .pfx to disk and points signing.certFile at it below).
+# ------------------------------------------------------------------------------
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # needed to create/attach the GitHub Release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@v4
+
+      - name: Checkout installer kit
+        uses: actions/checkout@v4
+        with:
+          repository: samdowrickstr/plannerday-installer-kit
+          path: installer-kit
+
+      - name: Install Qt (6.8.3 mingw)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          host: windows
+          target: desktop
+          arch: win64_mingw
+          modules: qtsvg
+          tools: "tools_mingw1310"
+
+      # --- Build YOUR app here (edit for your project) ------------------------
+      - name: Build app
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+
+      # --- Optional: materialise the signing certificate from secrets ---------
+      - name: Prepare signing certificate
+        if: ${{ secrets.CERT_PFX_BASE64 != '' }}
+        shell: pwsh
+        run: |
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cert.pfx",
+            [Convert]::FromBase64String($env:CERT_PFX_BASE64))
+          echo "SIGN_CERT=$env:RUNNER_TEMP\cert.pfx" >> $env:GITHUB_ENV
+        env:
+          CERT_PFX_BASE64: ${{ secrets.CERT_PFX_BASE64 }}
+
+      # --- Pack the installer -------------------------------------------------
+      # Point qt.dir/qt.mingw in installer.json at the env vars the Qt action
+      # exports (QT_ROOT_DIR, IQTA_TOOLS), or hard-code the runner paths.
+      - name: Pack installer
+        shell: pwsh
+        env:
+          INSTALLER_CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+        run: |
+          .\installer-kit\pack.ps1 -Config .\installer.json
+
+      - name: Upload installer to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*-Installer.exe

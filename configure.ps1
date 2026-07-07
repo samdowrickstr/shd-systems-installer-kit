@@ -100,6 +100,22 @@ $prefix   = Ask "Installer file name prefix" ($appName -replace '\s+','-')
 $distDir  = Ask "Output folder" "dist"
 $portable = AskYesNo "Also build a portable .zip?" $true
 
+Write-Host ""
+Write-Host "--- Code signing (optional) -----------------" -ForegroundColor Cyan
+$signEnabled = AskYesNo "Authenticode-sign the installer (needs Windows SDK signtool)?" $false
+$signing = [ordered]@{ enabled = $signEnabled; signtool = ""; certFile = ""; certPasswordEnv = "INSTALLER_CERT_PASSWORD"; thumbprint = ""; timestampUrl = "http://timestamp.digicert.com"; signPayload = $true }
+if ($signEnabled) {
+    $useThumb = AskYesNo "Use a certificate from the Windows store (by thumbprint)?" $false
+    if ($useThumb) {
+        $signing.thumbprint = Ask "Certificate SHA1 thumbprint"
+    } else {
+        $signing.certFile = Ask "Path to .pfx certificate"
+        $signing.certPasswordEnv = Ask "Env var holding the .pfx password" "INSTALLER_CERT_PASSWORD"
+    }
+    $signing.timestampUrl = Ask "Timestamp URL" "http://timestamp.digicert.com"
+    $signing.signPayload = AskYesNo "Also sign the bundled app exes?" $true
+}
+
 $version = [ordered]@{ appendBuildMetadata = $appendMeta }
 if ($verFile) { $version.file = $verFile } else { $version.literal = $verLit }
 
@@ -119,6 +135,7 @@ $installer = [ordered]@{
     payload = [ordered]@{ sources = $sources; windeployqt = $deploy; autoBundleDlls = $autoDll; dllSearchDirs = $dllDirs }
     qt      = [ordered]@{ dir = $qtDir; mingw = $mingw }
     output  = [ordered]@{ namePrefix = $prefix; distDir = $distDir; portableZip = $portable }
+    signing = $signing
 }
 
 $outPath = if ([System.IO.Path]::IsPathRooted($Output)) { $Output } else { Join-Path (Get-Location) $Output }

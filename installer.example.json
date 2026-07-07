@@ -59,5 +59,20 @@
     "namePrefix": "STR-ROTV-Dash",
     "distDir": "dist",
     "portableZip": true
+  },
+
+  "signing": {
+    "//": "Optional Authenticode signing to avoid SmartScreen warnings. Needs the Windows SDK (signtool).",
+    "enabled": false,
+    "//signtool": "Optional explicit path to signtool.exe; blank auto-detects (PATH, then newest Windows 10 SDK).",
+    "signtool": "",
+    "//certFile": "Path to a .pfx code-signing certificate. OR set 'thumbprint' to use one from the cert store.",
+    "certFile": "",
+    "//certPasswordEnv": "Name of the env var holding the .pfx password. NEVER put the password in this file.",
+    "certPasswordEnv": "INSTALLER_CERT_PASSWORD",
+    "thumbprint": "",
+    "timestampUrl": "http://timestamp.digicert.com",
+    "//signPayload": "Also sign the bundled app exes, not just the installer.",
+    "signPayload": true
   }
 }
