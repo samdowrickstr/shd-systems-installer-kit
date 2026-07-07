@@ -388,7 +388,7 @@ QVBoxLayout *SetupWindow::makeFrame(bool showSubtitle)
     auto *header = new QHBoxLayout();
     header->setSpacing(14);
     auto *logo = new QLabel(frame);
-    logo->setPixmap(brandLogo(36));
+    logo->setPixmap(brandLogo(42));
     logo->setAlignment(Qt::AlignVCenter);
     header->addWidget(logo, 0, Qt::AlignVCenter);
     auto *titles = new QVBoxLayout();

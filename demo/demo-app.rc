@@ -1,0 +1,3 @@
+// Embeds app.ico into demo-app.exe so Explorer, the taskbar, desktop and
+// Start Menu all show the SHD icon. ID 1 matches LoadIcon(MAKEINTRESOURCE(1)).
+1 ICON "app.ico"
