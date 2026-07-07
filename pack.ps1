@@ -29,6 +29,15 @@ function Resolve-CfgPath([string]$p) {
     return [System.IO.Path]::GetFullPath((Join-Path $cfgDir $p))
 }
 
+# Run a native tool whose harmless stderr warnings must NOT abort this
+# ErrorActionPreference=Stop script (e.g. windeployqt's dxcompiler warning).
+function Invoke-Native {
+    param([Parameter(Mandatory)][string]$Exe, [string[]]$Arguments)
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $Exe @Arguments 2>&1 | Out-Null } finally { $ErrorActionPreference = $old }
+}
+
 # Recursively copy a native exe/dll's non-system dependencies into $DestDir,
 # resolving each imported DLL against $SearchDirs (first match wins). Reads the
 # PE import table with MinGW objdump, so it works for ANY native Windows app
@@ -117,7 +126,17 @@ function Invoke-SignFile {
     $tool = Get-SignTool $Sign.signtool
     $args = @('sign', '/fd', 'SHA256')
     if ($Sign.timestampUrl) { $args += @('/tr', $Sign.timestampUrl, '/td', 'SHA256') }
-    if ($Sign.thumbprint) {
+    if ($Sign.dlib -or $Sign.metadata) {
+        # Azure Trusted Signing (or any signtool Dlib dispatcher): needs both the
+        # dlib DLL (Azure.CodeSigning.Dlib.dll) and a metadata json (Endpoint,
+        # CodeSigningAccountName, CertificateProfileName). Azure auth comes from
+        # the environment (AZURE_TENANT_ID/CLIENT_ID/CLIENT_SECRET or az login).
+        $dl = Resolve-CfgPath $Sign.dlib
+        $md = Resolve-CfgPath $Sign.metadata
+        if (-not ($dl -and (Test-Path -LiteralPath $dl))) { throw "signing.dlib not found: $($Sign.dlib)" }
+        if (-not ($md -and (Test-Path -LiteralPath $md))) { throw "signing.metadata not found: $($Sign.metadata)" }
+        $args += @('/dlib', $dl, '/dmdf', $md)
+    } elseif ($Sign.thumbprint) {
         $args += @('/sha1', $Sign.thumbprint)
     } elseif ($Sign.certFile) {
         $cf = Resolve-CfgPath $Sign.certFile
@@ -129,7 +148,7 @@ function Invoke-SignFile {
             else { Write-Warning "env var '$($Sign.certPasswordEnv)' is empty; signing may prompt or fail." }
         }
     } else {
-        throw "signing.enabled is true but neither signing.certFile nor signing.thumbprint is set."
+        throw "signing.enabled is true but none of signing.dlib/thumbprint/certFile is set."
     }
     $args += $File
     & $tool @args
@@ -244,6 +263,11 @@ foreach ($src in $cfg.payload.sources) {
 }
 Copy-Item -LiteralPath $setupExe -Destination $stage -Force
 
+# AppSetup.exe is the kit's own Qt GUI, so it ALWAYS needs its Qt runtime and the
+# platform plugin (platforms/qwindows.dll) - independent of how the payload apps
+# are deployed. Do this unconditionally so the installer can always launch.
+Invoke-Native "$qt\bin\windeployqt.exe" @('--release', (Join-Path $stage "AppSetup.exe"))
+
 if (-not ($cfg.payload.windeployqt -eq $false)) {
     foreach ($a in $cfg.apps) {
         $exePath = Join-Path $stage $a.exe
@@ -253,12 +277,11 @@ if (-not ($cfg.payload.windeployqt -eq $false)) {
         }
         if ($a.qmlDir) {
             $qml = Resolve-CfgPath $a.qmlDir
-            & "$qt\bin\windeployqt.exe" --release --compiler-runtime --qmldir "$qml" "$exePath" | Out-Null
+            Invoke-Native "$qt\bin\windeployqt.exe" @('--release', '--compiler-runtime', '--qmldir', $qml, $exePath)
         } else {
-            & "$qt\bin\windeployqt.exe" --release --compiler-runtime "$exePath" | Out-Null
+            Invoke-Native "$qt\bin\windeployqt.exe" @('--release', '--compiler-runtime', $exePath)
         }
     }
-    & "$qt\bin\windeployqt.exe" --release (Join-Path $stage "AppSetup.exe") | Out-Null
 }
 
 # Optional generic dependency bundling (for non-Qt native apps, or to catch DLLs

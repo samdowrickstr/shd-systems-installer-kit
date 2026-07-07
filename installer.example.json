@@ -71,6 +71,9 @@
     "//certPasswordEnv": "Name of the env var holding the .pfx password. NEVER put the password in this file.",
     "certPasswordEnv": "INSTALLER_CERT_PASSWORD",
     "thumbprint": "",
+    "//azure": "Azure Trusted Signing: set dlib to Azure.CodeSigning.Dlib.dll and metadata to your JSON; auth via AZURE_* env vars. Use timestampUrl http://timestamp.acs.microsoft.com.",
+    "dlib": "",
+    "metadata": "",
     "timestampUrl": "http://timestamp.digicert.com",
     "//signPayload": "Also sign the bundled app exes, not just the installer.",
     "signPayload": true

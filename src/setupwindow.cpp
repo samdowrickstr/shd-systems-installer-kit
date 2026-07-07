@@ -552,6 +552,10 @@ void SetupWindow::buildInstallUi()
     refreshFooter();
 
     auto *btnRow = new QHBoxLayout();
+    auto *attribution = new QLabel(
+        "Powered by the PlannerDay Installer Kit  \u00b7  \u00a9 PlannerDay Ltd (MIT)", this);
+    attribution->setStyleSheet("color:#9aa7b8; font-size:11px;");
+    btnRow->addWidget(attribution);
     btnRow->addStretch(1);
     m_secondaryButton = new QPushButton("Cancel", this);
     m_secondaryButton->setObjectName("ghost");

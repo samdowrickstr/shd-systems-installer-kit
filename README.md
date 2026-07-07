@@ -95,6 +95,7 @@ and adjust it, then run `.\pack.ps1`.
 | `signing.enabled` | Authenticode-sign the installer (and payload) with `signtool`. |
 | `signing.certFile` / `certPasswordEnv` | `.pfx` path + the **env var** holding its password. |
 | `signing.thumbprint` | Alternative to `certFile`: use a cert from the Windows store. |
+| `signing.dlib` / `signing.metadata` | Azure Trusted Signing (signtool Dlib dispatcher): `Azure.CodeSigning.Dlib.dll` + metadata JSON. |
 | `signing.timestampUrl` / `signPayload` / `signtool` | RFC-3161 timestamp URL; sign app exes too; optional signtool path. |
 
 All relative paths are resolved against the folder containing `installer.json`.
@@ -152,6 +153,12 @@ Azure Pipelines job on a Windows runner.
   Windows store. `pack.ps1` then signs the payload exes and the final
   `Installer.exe` with `signtool` (from the Windows 10/11 SDK), timestamped via
   `signing.timestampUrl`.
+- **Azure Trusted Signing** - fully supported: set `signing.dlib` to
+  `Azure.CodeSigning.Dlib.dll` and `signing.metadata` to your account metadata
+  JSON (Endpoint / CodeSigningAccountName / CertificateProfileName), use
+  `timestampUrl: http://timestamp.acs.microsoft.com`, and provide Azure auth via
+  the environment (`AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET`,
+  or `az login`). `pack.ps1` invokes `signtool ... /dlib <dll> /dmdf <json>`.
 - **CI releases** - `examples/release.yml` is a ready-to-copy GitHub Actions
   workflow: on every `v*` tag it installs Qt, builds your app, packs a (signed)
   installer, and attaches the `Installer.exe` to the GitHub Release. Copy it
