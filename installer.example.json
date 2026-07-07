@@ -1,47 +1,47 @@
 {
-  "//": "Packing config for STR-Installer-Kit. Copy to installer.json, edit, then run pack.ps1.",
+  "//": "Packing config for the SHD Systems Installer Kit. Copy to installer.json, edit, then run pack.ps1.",
   "//paths": "All relative paths are resolved against THIS file's folder.",
 
   "product": {
-    "appName": "STR ROTV Dash",
-    "displayName": "ROTV Dash",
+    "appName": "My App",
+    "displayName": "My App",
     "subtitle": "SETUP",
-    "publisher": "Subsea Technology and Rentals Ltd",
-    "registryKey": "StrRotvDash",
+    "publisher": "My Company Ltd",
+    "registryKey": "MyApp",
     "accentColor": "#1CA3C2",
-    "logo": "../RD178 - ROTV Dash/installer/StrLogo.svg",
-    "icon": "../RD178 - ROTV Dash/installer/app.ico"
+    "logo": "resources/logo.svg",
+    "icon": "resources/app.ico"
   },
 
   "version": {
     "//": "Use 'file' to read version.txt, or 'literal' for a fixed string.",
-    "file": "../RD178 - ROTV Dash/str-dashboard/version.txt",
+    "file": "build/version.txt",
     "literal": "",
     "appendBuildMetadata": true
   },
 
   "apps": [
     {
-      "exe": "rd178-dash.exe",
-      "name": "STR ROTV Dashboard",
-      "description": "monitor the topside unit",
+      "exe": "myapp.exe",
+      "name": "My App",
+      "description": "the main application",
       "default": true,
-      "qmlDir": "../RD178 - ROTV Dash/str-dashboard/qml"
+      "qmlDir": "build/myapp/qml"
     },
     {
-      "exe": "str-pilot.exe",
-      "name": "STR ROTV Pilot",
-      "description": "fly the ROTV",
+      "exe": "my-helper.exe",
+      "name": "My Helper",
+      "description": "supporting tool",
       "default": true,
-      "qmlDir": "../RD178 - ROTV Dash/str-pilot/qml"
+      "qmlDir": "build/my-helper/qml"
     }
   ],
 
   "payload": {
     "//sources": "Files/folders copied into the bundle (your already-built exes + data).",
     "sources": [
-      "../RD178 - ROTV Dash/build/str-dashboard/rd178-dash.exe",
-      "../RD178 - ROTV Dash/build/str-pilot/str-pilot.exe"
+      "build/myapp.exe",
+      "build/my-helper.exe"
     ],
     "windeployqt": true,
     "//autoBundleDlls": "Set true for non-Qt native apps: recursively copies non-system DLL dependencies (via objdump).",
@@ -56,7 +56,7 @@
   },
 
   "output": {
-    "namePrefix": "STR-ROTV-Dash",
+    "namePrefix": "My-App",
     "distDir": "dist",
     "portableZip": true
   },

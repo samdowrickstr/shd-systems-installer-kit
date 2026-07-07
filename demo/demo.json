@@ -1,0 +1,47 @@
+{
+  "//": "Demo packing config for the SHD Systems Installer Kit. Build with build-demo.ps1.",
+  "//paths": "All relative paths are resolved against THIS file's folder (demo/).",
+
+  "product": {
+    "appName": "SHD Systems Demo",
+    "displayName": "SHD Systems Demo",
+    "subtitle": "SETUP",
+    "publisher": "SHD Systems Ltd",
+    "registryKey": "ShdSystemsDemo",
+    "accentColor": "#1CA3C2",
+    "logo": "logo.svg",
+    "icon": "app.ico"
+  },
+
+  "version": {
+    "literal": "1.0.0",
+    "appendBuildMetadata": false
+  },
+
+  "apps": [
+    {
+      "exe": "demo-app.exe",
+      "name": "SHD Systems Demo App",
+      "description": "a tiny sample application",
+      "default": true
+    }
+  ],
+
+  "payload": {
+    "sources": [ "demo-app.exe" ],
+    "windeployqt": false,
+    "autoBundleDlls": false,
+    "dllSearchDirs": []
+  },
+
+  "qt": {
+    "dir": "D:/Qt/6.8.3/mingw_64",
+    "mingw": "D:/Qt/Tools/mingw1310_64/bin"
+  },
+
+  "output": {
+    "namePrefix": "SHD-Systems-Demo",
+    "distDir": ".",
+    "portableZip": false
+  }
+}
