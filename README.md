@@ -87,11 +87,65 @@ and adjust it, then run `.\pack.ps1`.
 | `version.appendBuildMetadata` | Append `+build.<timestamp>` (default true). |
 | `apps[]` | `exe`, `name`, `description`, `default`, optional `qmlDir`. |
 | `payload.sources[]` | Files/folders to copy into the bundle (your built exes). |
-| `payload.windeployqt` | Run `windeployqt` to bundle the Qt runtime. |
-| `qt.dir` / `qt.mingw` | Qt kit and MinGW `bin` paths. |
+| `payload.windeployqt` | Run `windeployqt` to bundle the Qt runtime (Qt apps). |
+| `payload.autoBundleDlls` | Auto-detect & copy non-system DLL dependencies (any native app). |
+| `payload.dllSearchDirs[]` | Extra folders to resolve DLLs from when `autoBundleDlls` is on. |
+| `qt.dir` / `qt.mingw` | Qt kit and MinGW `bin` paths (also used as DLL search dirs). |
 | `output.namePrefix` / `distDir` / `portableZip` | Output naming + options. |
 
 All relative paths are resolved against the folder containing `installer.json`.
+
+## Does it only work for Qt?
+
+No. The **installer GUI** (`AppSetup.exe`) is a Qt app, so building the kit
+itself needs Qt + MinGW. But the **payload can be any Windows software** - the
+installer just unpacks and copies whatever you stage in `payload.sources`, then
+writes shortcuts and an uninstall entry. Nothing about the runtime install is
+Qt-specific.
+
+**Bundling dependencies:**
+
+- **Qt apps** - set `payload.windeployqt: true`. `windeployqt` is the only
+  reliable way to gather Qt's runtime-loaded plugins (`platforms/qwindows.dll`,
+  image formats) and QML modules, which a dependency scan cannot see.
+- **Any native app (incl. non-Qt)** - set `payload.autoBundleDlls: true`. The
+  packer runs `objdump -p` on each staged binary, recursively resolves the
+  import table, and copies every **non-system** DLL it finds (searching
+  `payload.dllSearchDirs`, the stage folder, `qt.dir\bin` and `qt.mingw`).
+  Windows system DLLs and `api-ms-*` / `ext-ms-*` stubs are skipped.
+- You can enable **both**: `windeployqt` for plugins/QML, `autoBundleDlls` to
+  sweep up any remaining compiler-runtime DLLs.
+
+> Auto-detection sees only statically-imported DLLs. Plugins your app loads at
+> runtime (via `LoadLibrary`, Qt plugins, etc.) must be added to
+> `payload.sources` explicitly.
+
+## Integrating with your app's build
+
+`pack.ps1` is a plain script, so you can call it from CI or your build system
+after your app compiles. For example, from CMake:
+
+```cmake
+add_custom_target(installer
+    COMMAND powershell -ExecutionPolicy Bypass -File
+            "${CMAKE_SOURCE_DIR}/../STR-Installer-Kit/pack.ps1"
+            -Config "${CMAKE_SOURCE_DIR}/installer.json"
+    DEPENDS my_app
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/../STR-Installer-Kit"
+    COMMENT "Building the standalone installer")
+```
+
+Then `cmake --build . --target installer` produces the single-file
+`Installer.exe`. The same one-line invocation works in a GitHub Actions /
+Azure Pipelines job on a Windows runner.
+
+## Optional hardening
+
+- **Code signing** - Windows SmartScreen warns on unsigned installers. Sign the
+  generated `Installer.exe` (and ideally each payload exe) with `signtool sign
+  /fd SHA256 /tr <timestamp-url> /td SHA256 /f cert.pfx Installer.exe`.
+- **CI releases** - wire `pack.ps1` into GitHub Actions to attach the installer
+  to each tagged release automatically.
 
 ## Layout
 

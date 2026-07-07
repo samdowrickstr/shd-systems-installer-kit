@@ -43,7 +43,11 @@
       "../RD178 - ROTV Dash/build/str-dashboard/rd178-dash.exe",
       "../RD178 - ROTV Dash/build/str-pilot/str-pilot.exe"
     ],
-    "windeployqt": true
+    "windeployqt": true,
+    "//autoBundleDlls": "Set true for non-Qt native apps: recursively copies non-system DLL dependencies (via objdump).",
+    "autoBundleDlls": false,
+    "//dllSearchDirs": "Extra folders to resolve DLLs from when autoBundleDlls is on (e.g. a redistributable folder).",
+    "dllSearchDirs": []
   },
 
   "qt": {

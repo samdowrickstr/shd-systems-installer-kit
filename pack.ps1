@@ -29,6 +29,64 @@ function Resolve-CfgPath([string]$p) {
     return [System.IO.Path]::GetFullPath((Join-Path $cfgDir $p))
 }
 
+# Recursively copy a native exe/dll's non-system dependencies into $DestDir,
+# resolving each imported DLL against $SearchDirs (first match wins). Reads the
+# PE import table with MinGW objdump, so it works for ANY native Windows app
+# (MinGW or MSVC built) - not just Qt. Windows system DLLs are never bundled.
+function Copy-NativeDependencies {
+    param(
+        [string[]]$Roots,       # exe/dll files already staged, to scan
+        [string]$DestDir,
+        [string[]]$SearchDirs,
+        [string]$Objdump
+    )
+    $system = @(
+        'kernel32','kernelbase','user32','gdi32','gdi32full','advapi32','shell32','shlwapi',
+        'ole32','oleaut32','combase','msvcrt','ntdll','ws2_32','comdlg32','comctl32','setupapi',
+        'winmm','version','uxtheme','dwmapi','crypt32','wintrust','imm32','rpcrt4','secur32',
+        'userenv','dbghelp','psapi','powrprof','opengl32','glu32','d3d9','d3d11','d3d12','dxgi',
+        'dwrite','d2d1','bcrypt','ncrypt','iphlpapi','mpr','netapi32','wtsapi32','propsys',
+        'shcore','win32u','hid','cfgmgr32','devobj','mswsock','dnsapi','normaliz','wldap32',
+        'sechost','profapi','ucrtbase','authz','gdiplus','winspool','avicap32','avifil32',
+        'winhttp','wininet','urlmon','oleacc','msimg32','usp10','ntmarta','cryptbase','clbcatq'
+    )
+    $seen  = New-Object 'System.Collections.Generic.HashSet[string]'
+    $queue = New-Object 'System.Collections.Generic.Queue[string]'
+    foreach ($r in $Roots) { if (Test-Path -LiteralPath $r) { [void]$queue.Enqueue($r) } }
+    $copied = @()
+    while ($queue.Count -gt 0) {
+        $file = $queue.Dequeue()
+        $out = & $Objdump -p $file 2>$null
+        foreach ($line in $out) {
+            if ($line -match 'DLL Name:\s*(.+?)\s*$') {
+                $dll = $Matches[1].Trim()
+                $key = $dll.ToLower()
+                if ($seen.Contains($key)) { continue }
+                [void]$seen.Add($key)
+                $base = ($key -replace '\.dll$','')
+                if ($system -contains $base) { continue }
+                if ($base -like 'api-ms-*' -or $base -like 'ext-ms-*') { continue }
+                $destPath = Join-Path $DestDir $dll
+                if (Test-Path -LiteralPath $destPath) { [void]$queue.Enqueue($destPath); continue }
+                $found = $null
+                foreach ($d in $SearchDirs) {
+                    if (-not $d) { continue }
+                    $cand = Join-Path $d $dll
+                    if (Test-Path -LiteralPath $cand) { $found = $cand; break }
+                }
+                if ($found) {
+                    Copy-Item -LiteralPath $found -Destination $destPath -Force
+                    $copied += $dll
+                    [void]$queue.Enqueue($destPath)
+                } else {
+                    Write-Warning "        dependency not found (skipped): $dll"
+                }
+            }
+        }
+    }
+    if ($copied.Count) { Write-Host ("        bundled {0} dependency dll(s): {1}" -f $copied.Count, ($copied -join ', ')) }
+}
+
 # --- Qt / MinGW toolchain ---------------------------------------------------
 $qt    = $cfg.qt.dir
 $mingw = $cfg.qt.mingw
@@ -67,14 +125,22 @@ Write-Host "[1/7] Writing branding + runtime config..."
 # Logo (SVG only) and icon into the resources the GUI embeds.
 $logo = Resolve-CfgPath $cfg.product.logo
 $icon = Resolve-CfgPath $cfg.product.icon
+# Copy a file to a destination unless it already IS that destination.
+function Copy-IfDifferent([string]$src, [string]$dst) {
+    if (-not $src) { return }
+    $srcFull = [System.IO.Path]::GetFullPath($src)
+    $dstFull = [System.IO.Path]::GetFullPath($dst)
+    if ($srcFull -ieq $dstFull) { return }
+    Copy-Item -LiteralPath $src -Destination $dst -Force
+}
 if ($logo) {
     if ([System.IO.Path]::GetExtension($logo).ToLower() -ne ".svg") {
         Write-Warning "Logo should be an .svg - got '$logo'. Using it anyway as logo.svg."
     }
-    Copy-Item -LiteralPath $logo -Destination (Join-Path $res "logo.svg") -Force
+    Copy-IfDifferent $logo (Join-Path $res "logo.svg")
 }
 if ($icon) {
-    Copy-Item -LiteralPath $icon -Destination (Join-Path $res "app.ico") -Force
+    Copy-IfDifferent $icon (Join-Path $res "app.ico")
 }
 if (-not (Test-Path -LiteralPath (Join-Path $res "app.ico"))) {
     throw "resources/app.ico missing - set product.icon in installer.json"
@@ -141,6 +207,21 @@ if (-not ($cfg.payload.windeployqt -eq $false)) {
         }
     }
     & "$qt\bin\windeployqt.exe" --release (Join-Path $stage "AppSetup.exe") | Out-Null
+}
+
+# Optional generic dependency bundling (for non-Qt native apps, or to catch DLLs
+# windeployqt doesn't). Walks each staged exe's imports and copies non-system
+# DLLs found in the search dirs (stage first, then any dllSearchDirs, Qt, MinGW).
+if ($cfg.payload.autoBundleDlls -eq $true) {
+    Write-Host "        Auto-detecting native DLL dependencies (objdump)..."
+    $searchDirs = @()
+    foreach ($d in @($cfg.payload.dllSearchDirs)) {
+        $rd = Resolve-CfgPath $d
+        if ($rd) { $searchDirs += $rd }
+    }
+    $searchDirs += @($stage, "$qt\bin", $mingw)
+    $roots = Get-ChildItem -LiteralPath $stage -Filter *.exe | ForEach-Object { $_.FullName }
+    Copy-NativeDependencies -Roots $roots -DestDir $stage -SearchDirs $searchDirs -Objdump (Join-Path $mingw "objdump.exe")
 }
 
 Write-Host "[4/7] Archiving payload (tar.gz preserves folders)..."

@@ -78,6 +78,16 @@ if ($sources.Count -eq 0) {
     Write-Warning "No payload sources given - remember to add your built exes to installer.json."
 }
 $deploy = AskYesNo "Run windeployqt to bundle the Qt runtime?" $true
+$autoDll = AskYesNo "Auto-detect & bundle native DLL dependencies (for non-Qt apps)?" (-not $deploy)
+$dllDirs = @()
+if ($autoDll) {
+    Write-Host "Extra folders to resolve DLLs from (blank line to finish)." -ForegroundColor DarkGray
+    while ($true) {
+        $dd = Ask "  DLL search folder"
+        if (-not $dd) { break }
+        $dllDirs += $dd
+    }
+}
 
 Write-Host ""
 Write-Host "--- Qt toolchain ----------------------------" -ForegroundColor Cyan
@@ -106,7 +116,7 @@ $installer = [ordered]@{
     }
     version = $version
     apps    = $apps
-    payload = [ordered]@{ sources = $sources; windeployqt = $deploy }
+    payload = [ordered]@{ sources = $sources; windeployqt = $deploy; autoBundleDlls = $autoDll; dllSearchDirs = $dllDirs }
     qt      = [ordered]@{ dir = $qtDir; mingw = $mingw }
     output  = [ordered]@{ namePrefix = $prefix; distDir = $distDir; portableZip = $portable }
 }
