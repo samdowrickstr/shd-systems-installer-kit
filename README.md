@@ -179,9 +179,20 @@ Azure Pipelines job on a Windows runner.
 
 ## Licence & attribution
 
-© 2026 SHD Systems Ltd. Licensed under the MIT Licence. You may use, modify and
-redistribute this kit (including in commercial products) as long as the
-copyright and permission notice in [LICENSE](LICENSE) is preserved.
+© 2026 SHD Systems Ltd. **Dual-licensed:**
+
+- **GNU AGPLv3** ([LICENSE](LICENSE)) — free. You may use, modify and redistribute
+  this kit, including in commercial products, provided you comply with the AGPLv3
+  (publish your corresponding source under the AGPL when you distribute or run a
+  modified network-facing version) and keep the **"Powered by SHD Systems"**
+  attribution required by [ATTRIBUTION.md](ATTRIBUTION.md).
+- **Commercial licence** ([COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)) — for
+  closed-source use, or to white-label/remove the attribution. Contact SHD
+  Systems Ltd.
+
+See [LICENSING.md](LICENSING.md) for the full picture, [CLA.md](CLA.md) for
+contributions, and [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) for
+third-party components (notably **Qt** under the LGPL).
 
 The example configuration references STR (Subsea Technology and Rentals Ltd)
 products purely as a worked example; STR's branding assets remain STR's property.
