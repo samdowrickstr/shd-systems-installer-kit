@@ -1,4 +1,4 @@
-# configure.ps1 - PlannerDay Installer Kit setup wizard.
+# configure.ps1 - SHD Systems Installer Kit setup wizard.
 #
 # Interactively builds an installer.json for a new project: product name,
 # version, logo/icon, the app binaries to bundle and the Qt toolchain paths.
@@ -25,7 +25,7 @@ function AskYesNo([string]$prompt, [bool]$default = $true) {
 }
 
 Write-Host ""
-Write-Host "PlannerDay Installer Kit - setup wizard" -ForegroundColor Cyan
+Write-Host "SHD Systems Installer Kit - setup wizard" -ForegroundColor Cyan
 Write-Host "Answer the prompts; press Enter to accept the [default]." -ForegroundColor DarkGray
 Write-Host ""
 

@@ -2,13 +2,13 @@
 # ------------------------------------------------------------------------------
 # Copy this into YOUR APPLICATION repo as .github/workflows/release.yml.
 # On every pushed tag like v1.2.3 it builds your app, packs a signed installer
-# with the PlannerDay Installer Kit, and attaches the Installer.exe to the
+# with the SHD Systems Installer Kit, and attaches the Installer.exe to the
 # GitHub Release for that tag.
 #
 # Assumptions (adjust to your project):
 #   - Your app is a Qt 6 / MinGW app built with CMake.
 #   - This repo contains an installer.json at its root (see installer.example.json).
-#   - The kit lives at https://github.com/samdowrickstr/plannerday-installer-kit
+#   - The kit lives at https://github.com/samdowrickstr/shd-systems-installer-kit
 #
 # Optional code signing: add repository secrets
 #   CERT_PFX_BASE64  -> base64 of your .pfx  (certutil -encode / [Convert]::ToBase64String)
@@ -36,7 +36,7 @@ jobs:
       - name: Checkout installer kit
         uses: actions/checkout@v4
         with:
-          repository: samdowrickstr/plannerday-installer-kit
+          repository: samdowrickstr/shd-systems-installer-kit
           path: installer-kit
 
       - name: Install Qt (6.8.3 mingw)

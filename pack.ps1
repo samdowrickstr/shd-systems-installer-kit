@@ -1,4 +1,4 @@
-# pack.ps1 - PlannerDay Installer Kit packager.
+# pack.ps1 - SHD Systems Installer Kit packager.
 #
 # Reads a project's installer.json, embeds its runtime config + branding into the
 # generic AppSetup.exe, stages the payload (your already-built app exes + the Qt
@@ -188,7 +188,7 @@ $stage    = Join-Path $build "stage\$appName"
 $distDir  = if ($cfg.output.distDir) { Resolve-CfgPath $cfg.output.distDir } else { Join-Path $cfgDir "dist" }
 $res      = Join-Path $kitRoot "resources"
 # Build the installer GUI (uses windres) in a path WITHOUT spaces.
-$instBuild = Join-Path $env:TEMP "plannerday-installer-build"
+$instBuild = Join-Path $env:TEMP "shd-installer-build"
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 New-Item -ItemType Directory -Force -Path $build | Out-Null
 

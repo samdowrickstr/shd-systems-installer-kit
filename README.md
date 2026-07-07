@@ -1,12 +1,12 @@
-# PlannerDay Installer Kit
+# SHD Systems Installer Kit
 
 A small, reusable **Windows installer** for Qt/C++ desktop apps. It produces a
 single self-contained `Installer.exe` (no runtime dependencies) with a clean,
-branded install / update / repair / uninstall UI — driven entirely by a JSON
+branded install / update / repair / uninstall UI - driven entirely by a JSON
 config, so you never touch the C++ to ship a new product.
 
-Built and maintained by **PlannerDay Ltd**. Provided under the MIT licence
-(see [LICENSE](LICENSE)) — free to use, including commercially, provided the
+Built and maintained by **SHD Systems Ltd**. Provided under the MIT licence
+(see [LICENSE](LICENSE)) - free to use, including commercially, provided the
 copyright/attribution notice is retained.
 
 ## What you get
@@ -133,10 +133,10 @@ after your app compiles. For example, from CMake:
 ```cmake
 add_custom_target(installer
     COMMAND powershell -ExecutionPolicy Bypass -File
-            "${CMAKE_SOURCE_DIR}/../STR-Installer-Kit/pack.ps1"
+            "${CMAKE_SOURCE_DIR}/../shd-systems-installer-kit/pack.ps1"
             -Config "${CMAKE_SOURCE_DIR}/installer.json"
     DEPENDS my_app
-    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/../STR-Installer-Kit"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/../shd-systems-installer-kit"
     COMMENT "Building the standalone installer")
 ```
 
@@ -171,10 +171,12 @@ Azure Pipelines job on a Windows runner.
 - `src/main.cpp`, `src/setupwindow.{h,cpp}` — the config-driven Qt setup GUI.
 - `resources/` — `setup.qrc`, `logo.svg`, `check.svg`, `app.ico`, manifest, `.rc`.
 - `CMakeLists.txt` — builds `AppSetup.exe`.
-- `configure.ps1` — the setup wizard. `pack.ps1` — the packager.- `examples/release.yml` - GitHub Actions release workflow template.
+- `configure.ps1` - the setup wizard. `pack.ps1` - the packager.
+- `examples/release.yml` - GitHub Actions release workflow template.
+
 ## Licence & attribution
 
-© 2026 PlannerDay Ltd. Licensed under the MIT Licence. You may use, modify and
+© 2026 SHD Systems Ltd. Licensed under the MIT Licence. You may use, modify and
 redistribute this kit (including in commercial products) as long as the
 copyright and permission notice in [LICENSE](LICENSE) is preserved.
 

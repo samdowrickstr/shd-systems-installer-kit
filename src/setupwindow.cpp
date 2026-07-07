@@ -553,7 +553,7 @@ void SetupWindow::buildInstallUi()
 
     auto *btnRow = new QHBoxLayout();
     auto *attribution = new QLabel(
-        "Powered by the PlannerDay Installer Kit  \u00b7  \u00a9 PlannerDay Ltd (MIT)", this);
+        "Powered by the SHD Systems Installer Kit  \u00b7  \u00a9 SHD Systems Ltd (MIT)", this);
     attribution->setStyleSheet("color:#9aa7b8; font-size:11px;");
     btnRow->addWidget(attribution);
     btnRow->addStretch(1);
