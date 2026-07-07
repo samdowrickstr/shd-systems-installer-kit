@@ -464,7 +464,7 @@ void SetupWindow::applyStyle()
         QCheckBox { color:#15314c; font-weight:600; spacing:8px; background:transparent; }
         QCheckBox::indicator { width:18px; height:18px; border:1px solid #cdd6e2; border-radius:5px; background:#fff; }
         QCheckBox::indicator:checked { background:%1; border:1px solid %1; image:url(:/setup/check.svg); }
-        QPushButton { background:#15314c; color:#fff; border:0; border-radius:8px; padding:9px 18px; font-weight:600; }
+        QPushButton { background:#15314c; color:#fff; border:0; border-radius:8px; padding:9px 18px; font-weight:600; min-width:84px; }
         QPushButton:hover:enabled { background:#20405c; }
         QPushButton:disabled { background:#dbe2ec; color:#9aa7b8; }
         QPushButton#ghost { background:#fff; color:#15314c; border:1px solid #cdd6e2; }
@@ -552,10 +552,6 @@ void SetupWindow::buildInstallUi()
     refreshFooter();
 
     auto *btnRow = new QHBoxLayout();
-    auto *attribution = new QLabel(
-        "Powered by the SHD Systems Installer Kit  \u00b7  \u00a9 SHD Systems Ltd (MIT)", this);
-    attribution->setStyleSheet("color:#9aa7b8; font-size:11px;");
-    btnRow->addWidget(attribution);
     btnRow->addStretch(1);
     m_secondaryButton = new QPushButton("Cancel", this);
     m_secondaryButton->setObjectName("ghost");
@@ -567,6 +563,14 @@ void SetupWindow::buildInstallUi()
     connect(m_primaryButton, &QPushButton::clicked, this, &SetupWindow::startInstall);
     btnRow->addWidget(m_primaryButton);
     root->addLayout(btnRow);
+
+    // Attribution required by this kit's MIT licence — small, full-width footer
+    // under the button row, word-wrapped so it is never clipped.
+    auto *attribution = new QLabel(
+        "Powered by the SHD Systems Installer Kit  ·  © SHD Systems Ltd (MIT)", this);
+    attribution->setStyleSheet("color:#9aa7b8; font-size:11px;");
+    attribution->setWordWrap(true);
+    root->addWidget(attribution);
 }
 
 void SetupWindow::browseForFolder()
@@ -894,12 +898,20 @@ void SetupWindow::buildMaintenanceUi()
     });
     btnRow->addWidget(m_secondaryButton);
     btnRow->addStretch(1);
-    m_primaryButton = new QPushButton(update ? QString("Update to %1").arg(m_config.version) : QString("Repair"), this);
+    m_primaryButton = new QPushButton(update ? QString("Update to %1").arg(m_config.version.split('+').first()) : QString("Repair"), this);
     m_primaryButton->setCursor(Qt::PointingHandCursor);
     m_primaryButton->setDefault(true);
     connect(m_primaryButton, &QPushButton::clicked, this, &SetupWindow::doRepairOrUpdate);
     btnRow->addWidget(m_primaryButton);
     root->addLayout(btnRow);
+
+    // Attribution required by this kit's MIT licence — small, full-width footer
+    // under the button row, word-wrapped so it is never clipped.
+    auto *attribution = new QLabel(
+        "Powered by the SHD Systems Installer Kit  ·  © SHD Systems Ltd (MIT)", this);
+    attribution->setStyleSheet("color:#9aa7b8; font-size:11px;");
+    attribution->setWordWrap(true);
+    root->addWidget(attribution);
 }
 
 bool SetupWindow::closeRunningInstalledApps(const QString &targetDir)
@@ -1089,6 +1101,14 @@ void SetupWindow::buildUninstallUi()
     connect(m_primaryButton, &QPushButton::clicked, this, &SetupWindow::startUninstall);
     btnRow->addWidget(m_primaryButton);
     root->addLayout(btnRow);
+
+    // Attribution required by this kit's MIT licence — small, full-width footer
+    // under the button row, word-wrapped so it is never clipped.
+    auto *attribution = new QLabel(
+        "Powered by the SHD Systems Installer Kit  ·  © SHD Systems Ltd (MIT)", this);
+    attribution->setStyleSheet("color:#9aa7b8; font-size:11px;");
+    attribution->setWordWrap(true);
+    root->addWidget(attribution);
 }
 
 void SetupWindow::startUninstall()
