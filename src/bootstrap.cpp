@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: (c) 2026 SHD Systems Ltd
+
 // Standalone single-exe bootstrapper for the Qt installer kit.
 //
 // A Qt app can't be a single self-contained exe (it needs its Qt DLLs), so this

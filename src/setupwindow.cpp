@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: (c) 2026 SHD Systems Ltd
+
 #include "setupwindow.h"
 
 #include <QApplication>
@@ -564,13 +567,17 @@ void SetupWindow::buildInstallUi()
     btnRow->addWidget(m_primaryButton);
     root->addLayout(btnRow);
 
-    // Attribution required by this kit's MIT licence — small, full-width footer
-    // under the button row, word-wrapped so it is never clipped.
+#ifndef SHD_WHITELABEL
+    // Attribution Notice required under AGPLv3 §7(b); see ATTRIBUTION.md. It must
+    // stay visible under the free (AGPL) licence. Removal / white-label is only
+    // permitted under a commercial licence — build with -DSHD_WHITELABEL.
+    // TODO: hyperlink to SHD Systems' official URL once finalised.
     auto *attribution = new QLabel(
-        "Powered by the SHD Systems Installer Kit  ·  © SHD Systems Ltd (MIT)", this);
+        "Powered by SHD Systems  ·  © 2026 SHD Systems Ltd", this);
     attribution->setStyleSheet("color:#9aa7b8; font-size:11px;");
     attribution->setWordWrap(true);
     root->addWidget(attribution);
+#endif
 }
 
 void SetupWindow::browseForFolder()
@@ -905,13 +912,17 @@ void SetupWindow::buildMaintenanceUi()
     btnRow->addWidget(m_primaryButton);
     root->addLayout(btnRow);
 
-    // Attribution required by this kit's MIT licence — small, full-width footer
-    // under the button row, word-wrapped so it is never clipped.
+#ifndef SHD_WHITELABEL
+    // Attribution Notice required under AGPLv3 §7(b); see ATTRIBUTION.md. It must
+    // stay visible under the free (AGPL) licence. Removal / white-label is only
+    // permitted under a commercial licence — build with -DSHD_WHITELABEL.
+    // TODO: hyperlink to SHD Systems' official URL once finalised.
     auto *attribution = new QLabel(
-        "Powered by the SHD Systems Installer Kit  ·  © SHD Systems Ltd (MIT)", this);
+        "Powered by SHD Systems  ·  © 2026 SHD Systems Ltd", this);
     attribution->setStyleSheet("color:#9aa7b8; font-size:11px;");
     attribution->setWordWrap(true);
     root->addWidget(attribution);
+#endif
 }
 
 bool SetupWindow::closeRunningInstalledApps(const QString &targetDir)
@@ -1102,13 +1113,17 @@ void SetupWindow::buildUninstallUi()
     btnRow->addWidget(m_primaryButton);
     root->addLayout(btnRow);
 
-    // Attribution required by this kit's MIT licence — small, full-width footer
-    // under the button row, word-wrapped so it is never clipped.
+#ifndef SHD_WHITELABEL
+    // Attribution Notice required under AGPLv3 §7(b); see ATTRIBUTION.md. It must
+    // stay visible under the free (AGPL) licence. Removal / white-label is only
+    // permitted under a commercial licence — build with -DSHD_WHITELABEL.
+    // TODO: hyperlink to SHD Systems' official URL once finalised.
     auto *attribution = new QLabel(
-        "Powered by the SHD Systems Installer Kit  ·  © SHD Systems Ltd (MIT)", this);
+        "Powered by SHD Systems  ·  © 2026 SHD Systems Ltd", this);
     attribution->setStyleSheet("color:#9aa7b8; font-size:11px;");
     attribution->setWordWrap(true);
     root->addWidget(attribution);
+#endif
 }
 
 void SetupWindow::startUninstall()

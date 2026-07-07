@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: (c) 2026 SHD Systems Ltd
+
 # pack.ps1 - SHD Systems Installer Kit packager.
 #
 # Reads a project's installer.json, embeds its runtime config + branding into the

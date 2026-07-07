@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: (c) 2026 SHD Systems Ltd
+
 // demo-app.cpp - a tiny, self-contained Win32 app used as the demo payload.
 // Statically linked (no DLLs) so the demo installer stays simple. Build with:
 //   g++ demo-app.cpp -O2 -s -municode -mwindows -static -static-libgcc -static-libstdc++ -o demo-app.exe

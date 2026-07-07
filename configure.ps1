@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: (c) 2026 SHD Systems Ltd
+
 # configure.ps1 - SHD Systems Installer Kit setup wizard.
 #
 # Interactively builds an installer.json for a new project: product name,

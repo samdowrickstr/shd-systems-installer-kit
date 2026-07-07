@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: (c) 2026 SHD Systems Ltd
+
 #pragma once
 
 #include <QDialog>

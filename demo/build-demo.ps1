@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: (c) 2026 SHD Systems Ltd
+
 # build-demo.ps1 - build the tiny demo app and pack the SHD Systems demo installer.
 # Run from anywhere:  .\demo\build-demo.ps1
 # Produces demo\SHD-Systems-Demo-Installer.exe (and a versioned copy).

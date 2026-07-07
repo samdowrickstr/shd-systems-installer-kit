@@ -5,9 +5,12 @@ single self-contained `Installer.exe` (no runtime dependencies) with a clean,
 branded install / update / repair / uninstall UI - driven entirely by a JSON
 config, so you never touch the C++ to ship a new product.
 
-Built and maintained by **SHD Systems Ltd**. Provided under the MIT licence
-(see [LICENSE](LICENSE)) - free to use, including commercially, provided the
-copyright/attribution notice is retained.
+Built and maintained by **SHD Systems Ltd**. **Dual-licensed** under the
+**GNU AGPLv3** (see [LICENSE](LICENSE)) or a **commercial licence** (see
+[LICENSING.md](LICENSING.md)). Free to use under the AGPL, including
+commercially, provided you comply with the AGPL and keep the
+"Powered by SHD Systems" attribution ([ATTRIBUTION.md](ATTRIBUTION.md)); a
+commercial licence removes those obligations.
 
 ## What you get
 
