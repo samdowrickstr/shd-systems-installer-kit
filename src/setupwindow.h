@@ -47,13 +47,25 @@ struct InstallerConfig {
     QStringList appExeNames() const;
 };
 
+enum class SetupAction { Auto, Install, Update, Repair, Uninstall };
+
+enum SetupExitCode {
+    SetupExitSuccess = 0,
+    SetupExitFailed = 1,
+    SetupExitCancelled = 2,
+    SetupExitAlreadyCurrent = 3,
+    SetupExitNotInstalled = 4,
+    SetupExitInvalidArguments = 5
+};
+
 // Bespoke, config-driven installer. Runs in three modes: install (default),
 // maintenance (repair/update when already installed) and uninstall
 // (--uninstall, used by the copy of this exe placed in the install folder).
 class SetupWindow : public QDialog {
     Q_OBJECT
 public:
-    explicit SetupWindow(const InstallerConfig &config, bool uninstallMode,
+    explicit SetupWindow(const InstallerConfig &config, SetupAction action = SetupAction::Auto,
+                         bool silent = false,
                          QWidget *parent = nullptr);
 
 protected:
@@ -74,6 +86,9 @@ private:
 
     // --- install flow ---
     void buildInstallUi();
+    void runRequestedAction();
+    void finishSilent(int code);
+    void failSilent(int code, const QString &message);
     void refreshFooter();
     void browseForFolder();
     void startInstall();
@@ -110,6 +125,8 @@ private:
     enum class Mode { Install, Maintenance, Uninstall };
 
     InstallerConfig m_config;
+    SetupAction m_requestedAction = SetupAction::Auto;
+    bool m_silent = false;
     QString m_sourceDir;   // folder this setup exe runs from (contains payload)
     Mode m_mode = Mode::Install;
     QString m_installedDir;

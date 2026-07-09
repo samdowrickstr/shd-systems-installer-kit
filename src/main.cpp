@@ -4,6 +4,7 @@
 #include "setupwindow.h"
 
 #include <QApplication>
+#include <QByteArray>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -81,20 +82,52 @@ int main(int argc, char *argv[])
     QApplication::setOrganizationName(config.publisher);
     app.setWindowIcon(QIcon(QStringLiteral(":/setup/app.ico")));
 
-    bool uninstall = false;
+    SetupAction action = SetupAction::Auto;
+    bool silent = false;
     for (int i = 1; i < argc; ++i) {
-        if (qstrcmp(argv[i], "--uninstall") == 0) {
-            uninstall = true;
+        const QByteArray arg(argv[i]);
+        if (arg == "--uninstall") {
+            action = SetupAction::Uninstall;
+        } else if (arg == "--install") {
+            action = SetupAction::Install;
+        } else if (arg == "--update") {
+            action = SetupAction::Update;
+        } else if (arg == "--repair") {
+            action = SetupAction::Repair;
+        } else if (arg == "--silent" || arg == "--quiet") {
+            silent = true;
+        } else if (arg == "--help" || arg == "/?") {
+            QMessageBox::information(
+                nullptr,
+                QStringLiteral("Setup"),
+                QStringLiteral("Supported arguments:\n"
+                               "  --install\n"
+                               "  --update\n"
+                               "  --repair\n"
+                               "  --uninstall\n"
+                               "  --silent\n\n"
+                               "Exit codes:\n"
+                               "  0 success\n"
+                               "  1 failed\n"
+                               "  2 cancelled/running app did not close\n"
+                               "  3 already current/already installed\n"
+                               "  4 not installed\n"
+                               "  5 invalid arguments"));
+            return SetupExitSuccess;
+        } else {
+            return SetupExitInvalidArguments;
         }
     }
     // The installed copy is named uninstall.exe; double-clicking it (no args)
     // should uninstall, not run the installer.
     if (QFileInfo(QCoreApplication::applicationFilePath()).fileName()
             .compare("uninstall.exe", Qt::CaseInsensitive) == 0) {
-        uninstall = true;
+        action = SetupAction::Uninstall;
     }
 
-    SetupWindow window(config, uninstall);
-    window.show();
+    SetupWindow window(config, action, silent);
+    if (!silent) {
+        window.show();
+    }
     return app.exec();
 }

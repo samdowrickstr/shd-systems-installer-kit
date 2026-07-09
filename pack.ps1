@@ -32,6 +32,38 @@ function Resolve-CfgPath([string]$p) {
     return [System.IO.Path]::GetFullPath((Join-Path $cfgDir $p))
 }
 
+function Convert-ToSlug([string]$value) {
+    $slug = ($value.ToLowerInvariant() -replace '[^a-z0-9]+','-').Trim('-')
+    if ($slug) { return $slug }
+    return "desktop-product"
+}
+
+function Get-RelativePathSafe([string]$Base, [string]$Path) {
+    try {
+        return [System.IO.Path]::GetRelativePath($Base, $Path) -replace '\\','/'
+    } catch {
+        return Split-Path -Leaf $Path
+    }
+}
+
+function New-ArtifactManifestEntry {
+    param(
+        [Parameter(Mandatory)][string]$Role,
+        [Parameter(Mandatory)][string]$File,
+        [Parameter(Mandatory)][string]$DistDir,
+        [string]$ContentType = "application/octet-stream"
+    )
+    $item = Get-Item -LiteralPath $File
+    [ordered]@{
+        role        = $Role
+        fileName    = $item.Name
+        path        = Get-RelativePathSafe $DistDir $item.FullName
+        size        = $item.Length
+        sha256      = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        contentType = $ContentType
+    }
+}
+
 # Run a native tool whose harmless stderr warnings must NOT abort this
 # ErrorActionPreference=Stop script (e.g. windeployqt's dxcompiler warning).
 function Invoke-Native {
@@ -381,3 +413,62 @@ if ($portZip) {
     $pmb = [math]::Round((Get-Item $portZip).Length/1MB,1)
     Write-Host "Portable zip:         $portZip  ($pmb MB)"
 }
+
+# Generic SHD Fleet Manager release manifest. This is intentionally installer
+# agnostic: Fleet Manager only needs product/version/platform metadata, command
+# hints and artifact hashes. The SHD installer is just one producer of it.
+$release = $cfg.release
+$productId = if ($release.productId) { "$($release.productId)" } elseif ($cfg.product.registryKey) { Convert-ToSlug "$($cfg.product.registryKey)" } else { Convert-ToSlug $appName }
+$notes = ""
+if ($release.notesFile) {
+    $notesFile = Resolve-CfgPath $release.notesFile
+    if ($notesFile -and (Test-Path -LiteralPath $notesFile)) {
+        $notes = (Get-Content -LiteralPath $notesFile -Raw).Trim()
+    }
+}
+$artifacts = @()
+$artifacts += New-ArtifactManifestEntry -Role "primary" -File $out -DistDir $distDir -ContentType "application/x-msdownload"
+if ($portZip) {
+    $artifacts += New-ArtifactManifestEntry -Role "portable" -File $portZip -DistDir $distDir -ContentType "application/zip"
+}
+$restartBehavior = if ($release.install.restartBehavior) { "$($release.install.restartBehavior)" } else { "none" }
+if (@("none", "allowed", "required") -notcontains $restartBehavior) { $restartBehavior = "none" }
+$manifest = [ordered]@{
+    schemaVersion = 1
+    generatedAt   = (Get-Date).ToUniversalTime().ToString("o")
+    generator     = "shd-systems-installer-kit"
+    product       = [ordered]@{
+        id          = $productId
+        slug        = Convert-ToSlug $productId
+        name        = $appName
+        displayName = if ($cfg.product.displayName) { "$($cfg.product.displayName)" } else { $appName }
+        publisher   = "$($cfg.product.publisher)"
+    }
+    version     = $ver
+    semver      = $baseVer
+    channel     = if ($release.channel) { "$($release.channel)" } else { "stable" }
+    platform    = if ($release.platform) { "$($release.platform)" } else { "windows-x64" }
+    releaseType = if ($release.releaseType) { "$($release.releaseType)" } else { "recommended" }
+    notes       = $notes
+    signing     = [ordered]@{
+        enabled       = [bool]$doSign
+        payloadSigned = [bool]($doSign -and ($signing.signPayload -eq $true))
+        installerSigned = [bool]$doSign
+        timestampUrl  = if ($signing.timestampUrl) { "$($signing.timestampUrl)" } else { "" }
+    }
+    install = [ordered]@{
+        installCommand    = if ($release.install.installCommand) { "$($release.install.installCommand)" } else { "{artifact}" }
+        silentInstallArgs = if ($release.install.silentInstallArgs) { "$($release.install.silentInstallArgs)" } else { "--silent --update" }
+        updateArgs        = if ($release.install.updateArgs) { "$($release.install.updateArgs)" } else { "--update" }
+        uninstallArgs     = if ($release.install.uninstallArgs) { "$($release.install.uninstallArgs)" } else { "--uninstall" }
+        requiresElevation = [bool]($release.install.requiresElevation -eq $true)
+        restartBehavior   = $restartBehavior
+    }
+    artifacts = $artifacts
+}
+$manifestPath = Join-Path $distDir "$prefix-v$ver-release.json"
+$latestManifestPath = Join-Path $distDir "$prefix-release.json"
+$manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+Copy-Item -LiteralPath $manifestPath -Destination $latestManifestPath -Force
+Write-Host "Release manifest:     $manifestPath"
+Write-Host "Latest manifest:      $latestManifestPath"

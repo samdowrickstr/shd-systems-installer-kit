@@ -1,0 +1,42 @@
+﻿{
+    "schemaVersion":  1,
+    "generatedAt":  "2026-07-08T10:16:59.9623180Z",
+    "generator":  "shd-systems-installer-kit",
+    "product":  {
+                    "id":  "shdsystemsdemo",
+                    "slug":  "shdsystemsdemo",
+                    "name":  "SHD Systems Demo",
+                    "displayName":  "SHD Systems Demo",
+                    "publisher":  "SHD Systems Ltd"
+                },
+    "version":  "1.0.0",
+    "semver":  "1.0.0",
+    "channel":  "stable",
+    "platform":  "windows-x64",
+    "releaseType":  "recommended",
+    "notes":  "",
+    "signing":  {
+                    "enabled":  false,
+                    "payloadSigned":  false,
+                    "installerSigned":  false,
+                    "timestampUrl":  ""
+                },
+    "install":  {
+                    "installCommand":  "{artifact}",
+                    "silentInstallArgs":  "--silent --update",
+                    "updateArgs":  "--update",
+                    "uninstallArgs":  "--uninstall",
+                    "requiresElevation":  false,
+                    "restartBehavior":  "none"
+                },
+    "artifacts":  [
+                      {
+                          "role":  "primary",
+                          "fileName":  "SHD-Systems-Demo-v1.0.0-Installer.exe",
+                          "path":  "SHD-Systems-Demo-v1.0.0-Installer.exe",
+                          "size":  25086976,
+                          "sha256":  "5725bc35f64816d5ba997f447b9013ee346f004335b83d105737a7fe70d27a5c",
+                          "contentType":  "application/x-msdownload"
+                      }
+                  ]
+}

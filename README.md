@@ -75,6 +75,12 @@ If scripts are blocked by execution policy, prefix with
 Prefer to edit config by hand? Copy `installer.example.json` to `installer.json`
 and adjust it, then run `.\pack.ps1`.
 
+Each pack run also writes generic SHD Fleet Manager release manifests:
+`<Prefix>-v<version>-release.json` and `<Prefix>-release.json`. These sit beside
+the generated installer and portable archive, and contain product, version,
+channel, platform, policy, install command hints, SHA256 hashes, file sizes and
+signing state.
+
 ## `installer.json`
 
 | Key | Purpose |
@@ -95,6 +101,8 @@ and adjust it, then run `.\pack.ps1`.
 | `payload.dllSearchDirs[]` | Extra folders to resolve DLLs from when `autoBundleDlls` is on. |
 | `qt.dir` / `qt.mingw` | Qt kit and MinGW `bin` paths (also used as DLL search dirs). |
 | `output.namePrefix` / `distDir` / `portableZip` | Output naming + options. |
+| `release.productId` / `channel` / `platform` / `releaseType` | Optional generic Fleet Manager release metadata. |
+| `release.install.*` | Optional command hints for generic desktop update clients. |
 | `signing.enabled` | Authenticode-sign the installer (and payload) with `signtool`. |
 | `signing.certFile` / `certPasswordEnv` | `.pfx` path + the **env var** holding its password. |
 | `signing.thumbprint` | Alternative to `certFile`: use a cert from the Windows store. |
@@ -146,6 +154,40 @@ add_custom_target(installer
 Then `cmake --build . --target installer` produces the single-file
 `Installer.exe`. The same one-line invocation works in a GitHub Actions /
 Azure Pipelines job on a Windows runner.
+
+## Generic release manifests
+
+Every pack run writes a generic SHD Fleet Manager manifest beside the generated
+artifacts. It is intentionally not tied to this installer; it describes a desktop
+release in terms of product, version, channel, platform, policy, install command
+hints, hashes, sizes and signing state.
+
+The manifest can be imported by SHD OTA Fleet Manager to pre-fill a desktop
+release. Other packaging systems can emit the same schema for MSI, MSIX, DMG,
+PKG, AppImage, DEB, RPM, ZIP or TAR.GZ releases.
+
+## Command-line modes
+
+The setup executable supports automation flags for update clients:
+
+```powershell
+.\Installer.exe --install
+.\Installer.exe --update
+.\Installer.exe --repair
+.\Installer.exe --uninstall
+.\Installer.exe --silent --update
+```
+
+Stable exit codes:
+
+| Code | Meaning |
+|---:|---|
+| 0 | Success |
+| 1 | Failed |
+| 2 | Cancelled, or running app did not close |
+| 3 | Already installed/current |
+| 4 | Not installed |
+| 5 | Invalid arguments |
 
 ## Optional hardening
 

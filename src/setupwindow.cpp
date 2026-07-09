@@ -272,13 +272,15 @@ void terminateInstalledApps(const QString &targetDir, const QStringList &appExes
 }
 } // namespace
 
-SetupWindow::SetupWindow(const InstallerConfig &config, bool uninstallMode, QWidget *parent)
+SetupWindow::SetupWindow(const InstallerConfig &config, SetupAction action, bool silent, QWidget *parent)
     : QDialog(parent)
     , m_config(config)
+    , m_requestedAction(action)
+    , m_silent(silent)
 {
     m_sourceDir = QCoreApplication::applicationDirPath();
     const bool installed = readInstalledInfo();
-    if (uninstallMode) {
+    if (action == SetupAction::Uninstall) {
         m_mode = Mode::Uninstall;
         m_installedDir = QCoreApplication::applicationDirPath(); // uninstall.exe sits in it
     } else if (installed) {
@@ -299,6 +301,10 @@ SetupWindow::SetupWindow(const InstallerConfig &config, bool uninstallMode, QWid
     case Mode::Install:      buildInstallUi();      break;
     }
     centreOnPrimary();
+
+    if (m_silent || m_requestedAction != SetupAction::Auto) {
+        QTimer::singleShot(0, this, &SetupWindow::runRequestedAction);
+    }
 }
 
 QString SetupWindow::defaultInstallDir() const
@@ -477,6 +483,61 @@ void SetupWindow::applyStyle()
     )").arg(accent));
 }
 
+void SetupWindow::finishSilent(int code)
+{
+    if (!m_silent) {
+        return;
+    }
+    done(code);
+    QCoreApplication::exit(code);
+}
+
+void SetupWindow::failSilent(int code, const QString &message)
+{
+    if (m_status) {
+        m_status->setText(message);
+    }
+    finishSilent(code);
+}
+
+void SetupWindow::runRequestedAction()
+{
+    if (m_mode == Mode::Install) {
+        if (m_requestedAction == SetupAction::Update || m_requestedAction == SetupAction::Repair) {
+            failSilent(SetupExitNotInstalled, m_config.appName + " is not installed.");
+            return;
+        }
+        if (m_silent || m_requestedAction == SetupAction::Install) {
+            startInstall();
+        }
+        return;
+    }
+
+    if (m_mode == Mode::Maintenance) {
+        if (m_requestedAction == SetupAction::Install) {
+            failSilent(SetupExitAlreadyCurrent, m_config.appName + " is already installed.");
+            return;
+        }
+        if (m_requestedAction == SetupAction::Uninstall) {
+            QStringList args{"--uninstall"};
+            if (m_silent) {
+                args << "--silent";
+            }
+            QProcess::startDetached(QDir(m_installedDir).filePath("uninstall.exe"), args);
+            finishSilent(SetupExitSuccess);
+            return;
+        }
+        if (m_silent || m_requestedAction == SetupAction::Update || m_requestedAction == SetupAction::Repair) {
+            doRepairOrUpdate();
+        }
+        return;
+    }
+
+    if (m_mode == Mode::Uninstall && (m_silent || m_requestedAction == SetupAction::Uninstall)) {
+        startUninstall();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Install UI
 // ---------------------------------------------------------------------------
@@ -636,7 +697,9 @@ bool SetupWindow::copyPayload(const QString &targetDir, int &doneOut, int total)
         const QString dest = QDir(targetDir).filePath(rel);
         QString errorMessage;
         if (!copyPayloadFile(it.filePath(), dest, &errorMessage)) {
-            QMessageBox::critical(this, m_config.appName + " Setup", errorMessage);
+            if (!m_silent) {
+                QMessageBox::critical(this, m_config.appName + " Setup", errorMessage);
+            }
             return false;
         }
         ++doneOut;
@@ -718,10 +781,12 @@ void SetupWindow::startInstall()
 {
     const QString targetDir = QDir::cleanPath(QDir::fromNativeSeparators(m_pathEdit->text().trimmed()));
     if (targetDir.isEmpty()) {
+        if (m_silent) { failSilent(SetupExitInvalidArguments, "Install location is empty."); return; }
         QMessageBox::warning(this, m_config.appName + " Setup", "Please choose an install location.");
         return;
     }
     if (QDir(targetDir) == QDir(m_sourceDir)) {
+        if (m_silent) { failSilent(SetupExitInvalidArguments, "Install location matches setup source location."); return; }
         QMessageBox::warning(this, m_config.appName + " Setup",
                              "Please choose a different folder from the installer's own location.");
         return;
@@ -735,6 +800,7 @@ void SetupWindow::startInstall()
         }
     }
     if (!anySelected) {
+        if (m_silent) { failSilent(SetupExitInvalidArguments, "No apps selected for installation."); return; }
         QMessageBox::warning(this, m_config.appName + " Setup",
                              "Select at least one app to install.");
         return;
@@ -764,6 +830,7 @@ void SetupWindow::startInstall()
     };
 
     if (!QDir().mkpath(targetDir)) {
+        if (m_silent) { failSilent(SetupExitFailed, "Could not create install folder."); return; }
         QMessageBox::critical(this, m_config.appName + " Setup",
                               "Could not create:\n" + QDir::toNativeSeparators(targetDir));
         reenable();
@@ -771,6 +838,7 @@ void SetupWindow::startInstall()
     }
 
     if (!closeRunningInstalledApps(targetDir)) {
+        if (m_silent) { failSilent(SetupExitCancelled, "Install cancelled because running apps did not close."); return; }
         reenable();
         m_progress->hide();
         m_status->setText("Install cancelled. Close the app and try again.");
@@ -780,6 +848,7 @@ void SetupWindow::startInstall()
     const int total = countPayloadFiles();
     int done = 0;
     if (!copyPayload(targetDir, done, total)) {
+        if (m_silent) { failSilent(SetupExitFailed, "Install failed while copying payload files."); return; }
         reenable();
         m_status->setText("Install failed. Close any running app windows and try again.");
         return;
@@ -789,6 +858,7 @@ void SetupWindow::startInstall()
     const QString uninstPath = QDir(targetDir).filePath("uninstall.exe");
     QString uninstError;
     if (!copyPayloadFile(QCoreApplication::applicationFilePath(), uninstPath, &uninstError)) {
+        if (m_silent) { failSilent(SetupExitFailed, uninstError); return; }
         QMessageBox::critical(this, m_config.appName + " Setup", uninstError);
         reenable();
         m_status->setText("Install failed. Close any running app windows and try again.");
@@ -849,6 +919,7 @@ void SetupWindow::finishInstall(const QString &targetDir)
         }
         close();
     });
+    finishSilent(SetupExitSuccess);
 }
 
 // ---------------------------------------------------------------------------
@@ -933,6 +1004,15 @@ bool SetupWindow::closeRunningInstalledApps(const QString &targetDir)
         return true;
     }
 
+    if (m_silent) {
+        if (m_status) {
+            m_status->setText("Closing " + m_config.appName + "...");
+        }
+        QCoreApplication::processEvents();
+        requestProcessesClose(running);
+        return waitForInstalledAppsToExit(targetDir, appExes, 30000);
+    }
+
     QStringList processLines;
     for (const RunningAppProcess &process : running) {
         processLines << QString("%1 (PID %2)").arg(process.exeName).arg(process.pid);
@@ -990,6 +1070,10 @@ bool SetupWindow::closeRunningInstalledApps(const QString &targetDir)
 void SetupWindow::doRepairOrUpdate()
 {
     const bool update = shouldUpdateToInstaller(m_installedVersion, m_config.version);
+    if (m_silent && m_requestedAction == SetupAction::Update && !update) {
+        failSilent(SetupExitAlreadyCurrent, m_config.appName + " is already current.");
+        return;
+    }
     const QString target = m_installedDir;
     const QString desktop = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
     bool desktopExisted = false;
@@ -1007,6 +1091,7 @@ void SetupWindow::doRepairOrUpdate()
     QCoreApplication::processEvents();
 
     if (!closeRunningInstalledApps(target)) {
+        if (m_silent) { failSilent(SetupExitCancelled, "Update/repair cancelled because running apps did not close."); return; }
         m_primaryButton->setEnabled(true);
         m_secondaryButton->setEnabled(true);
         m_progress->hide();
@@ -1019,6 +1104,7 @@ void SetupWindow::doRepairOrUpdate()
     const int total = countPayloadFiles();
     int done = 0;
     if (!copyPayload(target, done, total)) {
+        if (m_silent) { failSilent(SetupExitFailed, "Update/repair failed while copying payload files."); return; }
         m_primaryButton->setEnabled(true);
         m_secondaryButton->setEnabled(true);
         m_status->setText(update
@@ -1030,6 +1116,7 @@ void SetupWindow::doRepairOrUpdate()
     const QString uninstPath = QDir(target).filePath("uninstall.exe");
     QString uninstError;
     if (!copyPayloadFile(QCoreApplication::applicationFilePath(), uninstPath, &uninstError)) {
+        if (m_silent) { failSilent(SetupExitFailed, uninstError); return; }
         QMessageBox::critical(this, m_config.appName + " Setup", uninstError);
         m_primaryButton->setEnabled(true);
         m_secondaryButton->setEnabled(true);
@@ -1076,6 +1163,7 @@ void SetupWindow::doRepairOrUpdate()
         }
         close();
     });
+    finishSilent(SetupExitSuccess);
 }
 
 // ---------------------------------------------------------------------------
@@ -1172,6 +1260,7 @@ void SetupWindow::startUninstall()
     }
 
     m_status->setText(m_config.appName + " has been removed.");
+    finishSilent(SetupExitSuccess);
     QTimer::singleShot(1000, this, &QWidget::close);
 }
 

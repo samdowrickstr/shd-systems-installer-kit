@@ -61,6 +61,23 @@
     "portableZip": true
   },
 
+  "release": {
+    "//": "Optional generic SHD Fleet Manager release manifest metadata.",
+    "productId": "my-app",
+    "channel": "stable",
+    "platform": "windows-x64",
+    "releaseType": "recommended",
+    "notesFile": "RELEASE_NOTES.md",
+    "install": {
+      "installCommand": "{artifact}",
+      "silentInstallArgs": "--silent --update",
+      "updateArgs": "--update",
+      "uninstallArgs": "--uninstall",
+      "requiresElevation": false,
+      "restartBehavior": "none"
+    }
+  },
+
   "signing": {
     "//": "Optional Authenticode signing to avoid SmartScreen warnings. Needs the Windows SDK (signtool).",
     "enabled": false,
