@@ -3,6 +3,8 @@
 
 #include "setupwindow.h"
 
+#include "fetcher.h"
+
 #include <QApplication>
 #include <QCheckBox>
 #include <QColor>
@@ -588,6 +590,11 @@ void SetupWindow::buildInstallUi()
         }
     }
 
+    // Physics modules, when this product downloads components. Built from the
+    // manifest, not hard-coded — adding structural analysis must be a
+    // publishing change, not an installer release.
+    buildModuleUi(card, cl);
+
     cl->addSpacing(6);
     auto *optLabel = new QLabel("OPTIONS", card);
     optLabel->setObjectName("section");
@@ -650,6 +657,175 @@ void SetupWindow::browseForFolder()
     }
 }
 
+// ---------------------------------------------------------------------------
+// Component selection and fetching
+//
+// The application is embedded in this installer; solver backends are not. The
+// user picks which physics they want, the sizes are shown before they are
+// asked, and the fetch happens DURING the install while they are already
+// waiting — rather than later, in the middle of their first simulation.
+// (SHD-Sim-CFD ADR-0013.)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// "fluids" -> "Fluids". Only a fallback: a manifest may carry a displayName,
+// and that always wins. This exists so a newly published module is legible
+// immediately rather than needing an installer change to get a capital letter.
+QString prettyModuleName(const QString &id)
+{
+    if (id.isEmpty()) return id;
+    QString out = id;
+    out[0] = out[0].toUpper();
+    return out.replace(QLatin1Char('-'), QLatin1Char(' '));
+}
+
+}  // namespace
+
+bool SetupWindow::loadModules(QString *whyNot)
+{
+    if (!m_config.download.enabled) return false;
+
+    // An offline build embeds every backend in the payload. It still has a
+    // manifest — so the components are known and recorded — but there is
+    // nothing to fetch, and no page to show.
+    const QString embeddedDir = QDir(m_sourceDir).filePath(QStringLiteral("components"));
+
+    shdkit::ComponentFetcher fetcher(m_config.download.baseUrl, this);
+
+    if (m_config.download.publicKey.isEmpty()) {
+        // Not fatal — a product may use the kit without a signing key — but it
+        // must not be quiet. An installer that writes fetched executables and
+        // cannot say who signed them is a supply-chain surface with no lid.
+        qWarning("No download.publicKey configured: the release manifest will NOT be "
+                 "verified. Set one before shipping.");
+    }
+
+    QString error;
+    if (!fetcher.fetchManifest(m_config.download.manifestKey, m_config.download.publicKey,
+                               &m_manifest, &error)) {
+        if (whyNot) *whyNot = error;
+        return false;
+    }
+
+    for (const QString &id : m_manifest.modules()) {
+        ModuleEntry entry;
+        entry.id = id;
+        entry.label = prettyModuleName(id);
+
+        for (const shdkit::Component &c : m_manifest.components) {
+            if (!c.modules.contains(id)) continue;
+            if (!c.fetched) continue;
+
+            // Already in the payload? Then this is the offline variant and the
+            // component is a fact, not a choice.
+            if (QFileInfo::exists(QDir(embeddedDir).filePath(
+                    c.objectKey.section(QLatin1Char('/'), -1)))) {
+                entry.embedded = true;
+            }
+            entry.components.append(c);
+            if (entry.description.isEmpty()) entry.description = c.description;
+        }
+
+        if (entry.components.isEmpty()) continue;
+        // The first module in the manifest is on by default: somebody
+        // installing a CFD product almost certainly wants the CFD solver, and
+        // an installer whose every box is unticked invites a user to sail past
+        // the page and end up with nothing.
+        entry.defaultOn = m_modules.isEmpty();
+        m_modules.append(entry);
+    }
+
+    return !m_modules.isEmpty();
+}
+
+void SetupWindow::buildModuleUi(QWidget *card, QVBoxLayout *layout)
+{
+    QString whyNot;
+    if (!loadModules(&whyNot)) {
+        if (!m_config.download.enabled) return;
+
+        // ── The manifest could not be had ──────────────────────────────────
+        // Not an error. The application is embedded and installs perfectly
+        // well without a solver; what the user loses is the CHOICE, not the
+        // product. Refusing to install because a website is down would be the
+        // worse failure by a wide margin.
+        auto *note = new QLabel(
+            QStringLiteral(
+                "Optional physics backends could not be listed — the download service "
+                "is unreachable.\n\n%1 will install, and the backends can be added "
+                "later from Settings.")
+                .arg(m_config.appName),
+            card);
+        note->setWordWrap(true);
+        note->setStyleSheet(QStringLiteral("color:#8a6d3b;"));
+        layout->addSpacing(6);
+        layout->addWidget(note);
+        if (!whyNot.isEmpty()) qWarning("%s", qPrintable(whyNot));
+        return;
+    }
+
+    layout->addSpacing(6);
+    auto *label = new QLabel(m_config.download.promptTitle, card);
+    label->setObjectName(QStringLiteral("section"));
+    layout->addWidget(label);
+
+    if (!m_config.download.promptHint.isEmpty()) {
+        auto *hint = new QLabel(m_config.download.promptHint, card);
+        hint->setWordWrap(true);
+        hint->setStyleSheet(QStringLiteral("color:#5a6b80; font-size:11px;"));
+        layout->addWidget(hint);
+    }
+
+    for (ModuleEntry &entry : m_modules) {
+        // The size is on the checkbox, not in a tooltip. Asking somebody to
+        // choose a 624 MB download without telling them it is 624 MB is not
+        // asking a fair question.
+        const QString sizeText = entry.embedded
+                                     ? QStringLiteral("included")
+                                     : shdkit::formatSize(entry.downloadBytes());
+        QString text = QStringLiteral("%1  —  %2").arg(entry.label, sizeText);
+        if (!entry.description.isEmpty()) {
+            text = QStringLiteral("%1  —  %2  (%3)")
+                       .arg(entry.label, sizeText, entry.description);
+        }
+
+        entry.check = new QCheckBox(text, card);
+        entry.check->setChecked(entry.defaultOn || entry.embedded);
+        if (entry.embedded) {
+            // Nothing to download and nothing to decide: it is already here.
+            entry.check->setEnabled(false);
+        }
+        layout->addWidget(entry.check);
+        connect(entry.check, &QCheckBox::toggled, this, &SetupWindow::refreshFooter);
+    }
+
+    m_downloadSummary = new QLabel(card);
+    m_downloadSummary->setWordWrap(true);
+    m_downloadSummary->setStyleSheet(QStringLiteral("color:#5a6b80; font-size:11px;"));
+    layout->addWidget(m_downloadSummary);
+}
+
+QList<shdkit::Component> SetupWindow::selectedComponents() const
+{
+    QList<shdkit::Component> out;
+    QStringList seen;
+    for (const ModuleEntry &entry : m_modules) {
+        if (entry.check && !entry.check->isChecked()) continue;
+        if (entry.embedded) continue;  // already in the payload
+        for (const shdkit::Component &c : entry.components) {
+            // One backend can serve several modules — CalculiX covers
+            // structural AND thermal — so ticking both must not download it
+            // twice.
+            const QString key = c.objectKey;
+            if (seen.contains(key)) continue;
+            seen.append(key);
+            out.append(c);
+        }
+    }
+    return out;
+}
+
 void SetupWindow::refreshFooter()
 {
     const QString self = QFileInfo(QCoreApplication::applicationFilePath()).fileName();
@@ -662,9 +838,209 @@ void SetupWindow::refreshFooter()
         if (!wantExe(name)) continue;
         bytes += it.fileInfo().size();
     }
+    const QList<shdkit::Component> selected = selectedComponents();
+    qint64 downloadBytes = 0;
+    for (const shdkit::Component &c : selected) downloadBytes += c.size;
+
     const double mb = bytes / (1024.0 * 1024.0);
     m_status->setText(QString("Requires about %1 MB of disk space   ·   Version %2")
-                          .arg(QString::number(mb, 'f', 0), m_config.version));
+                          .arg(QString::number(mb + downloadBytes / (1024.0 * 1024.0), 'f', 0),
+                               m_config.version));
+
+    if (!m_downloadSummary) return;
+
+    if (selected.isEmpty()) {
+        m_downloadSummary->setText(
+            QStringLiteral("Nothing to download. Backends can be added later from Settings."));
+        return;
+    }
+
+    // ── Disk space, checked BEFORE the user commits ────────────────────────
+    // Running out at 90% of a 624 MB download leaves a mess they have to clean
+    // up by hand, and it is entirely predictable beforehand.
+    const QString target =
+        QDir::cleanPath(QDir::fromNativeSeparators(m_pathEdit->text().trimmed()));
+    const qint64 needed = bytes + shdkit::ComponentFetcher::spaceNeededFor(selected);
+    const qint64 free = shdkit::ComponentFetcher::freeSpaceFor(target);
+
+    QString text = QStringLiteral("%1 to download across %2 component%3.")
+                       .arg(shdkit::formatSize(downloadBytes))
+                       .arg(selected.size())
+                       .arg(selected.size() == 1 ? QString() : QStringLiteral("s"));
+
+    if (free >= 0 && free < needed) {
+        text += QStringLiteral("\n⚠ Needs about %1 free including unpacking; this drive has %2.")
+                    .arg(shdkit::formatSize(needed), shdkit::formatSize(free));
+        m_downloadSummary->setStyleSheet(QStringLiteral("color:#a5442f; font-size:11px;"));
+    } else {
+        m_downloadSummary->setStyleSheet(QStringLiteral("color:#5a6b80; font-size:11px;"));
+    }
+    m_downloadSummary->setText(text);
+}
+
+QList<shdkit::Component> SetupWindow::fetchSelectedComponents(const QString &targetDir)
+{
+    QList<shdkit::Component> failed;
+    const QList<shdkit::Component> selected = selectedComponents();
+    if (selected.isEmpty()) {
+        writeBackendState(targetDir, {}, {});
+        return failed;
+    }
+
+    // Downloads land in the install tree, not %TEMP%. Two reasons: a resumed
+    // download survives a reboot that clears TEMP, and the archive is on the
+    // same volume as its destination, so unpacking cannot fail for space
+    // reasons that the pre-check said were fine.
+    const QString cacheDir = QDir(targetDir).filePath(QStringLiteral("downloads"));
+
+    shdkit::ComponentFetcher fetcher(m_config.download.baseUrl, this);
+    connect(&fetcher, &shdkit::ComponentFetcher::progress, this,
+            [this](const QString &, int percent, const QString &detail) {
+                m_progress->setValue(percent);
+                m_status->setText(detail);
+                QCoreApplication::processEvents();
+            });
+    connect(&fetcher, &shdkit::ComponentFetcher::message, this, [this](const QString &text) {
+        m_status->setText(text);
+        QCoreApplication::processEvents();
+    });
+
+    QList<shdkit::Component> installed;
+
+    for (const shdkit::Component &component : selected) {
+        m_progress->setValue(0);
+        m_status->setText(QStringLiteral("Downloading %1…").arg(component.label()));
+        QCoreApplication::processEvents();
+
+        // Not `result`: QDialog already has a result() and the shadowing is
+        // silent until it isn't.
+        const shdkit::FetchResult fetched = fetcher.fetch(component, cacheDir);
+        if (!fetched.ok) {
+            qWarning("%s", qPrintable(fetched.error));
+            failed.append(component);
+            continue;
+        }
+
+        m_status->setText(QStringLiteral("Unpacking %1…").arg(component.label()));
+        QCoreApplication::processEvents();
+
+        QString error;
+        if (!unpackComponent(component, fetched.path, targetDir, &error)) {
+            qWarning("%s", qPrintable(error));
+            failed.append(component);
+            continue;
+        }
+
+        // The archive is only removed once it has unpacked. Deleting it earlier
+        // would turn a failed extraction into a second full download.
+        QFile::remove(fetched.path);
+        installed.append(component);
+    }
+
+    QDir(cacheDir).removeRecursively();
+    writeBackendState(targetDir, installed, failed);
+    return failed;
+}
+
+bool SetupWindow::unpackComponent(const shdkit::Component &component,
+                                  const QString &archivePath,
+                                  const QString &targetDir,
+                                  QString *error)
+{
+    // Into a sibling, then renamed. The old shape — delete the destination,
+    // then spend two minutes writing 949 files into it — leaves a half-built
+    // backend behind if anything interrupts it, and a half-built backend is
+    // indistinguishable from a deliberate UI-only install: the app falls back
+    // to preview mode and says nothing. The rename is the only moment the
+    // destination changes.
+    const QString finalDir = QDir(targetDir).filePath(component.name);
+    const QString incoming = finalDir + QStringLiteral(".incoming");
+
+    QDir(incoming).removeRecursively();
+    if (!QDir().mkpath(incoming)) {
+        *error = QStringLiteral("Could not create %1.").arg(QDir::toNativeSeparators(incoming));
+        return false;
+    }
+
+    // Windows 10+ ships bsdtar as tar.exe and it reads zip as well as tar.gz —
+    // the same tool the bootstrap stub already relies on, so this adds no
+    // dependency. bsdtar returns non-zero on harmless root-entry warnings, so
+    // success is judged by the result rather than the exit code.
+    QProcess tar;
+    tar.setWorkingDirectory(incoming);
+    tar.start(QStringLiteral("tar.exe"),
+              {QStringLiteral("-xf"), QDir::toNativeSeparators(archivePath),
+               QStringLiteral("-C"), QDir::toNativeSeparators(incoming)});
+    if (!tar.waitForStarted(15000)) {
+        *error = QStringLiteral("Could not run tar.exe to unpack %1.").arg(component.label());
+        QDir(incoming).removeRecursively();
+        return false;
+    }
+    // 624 MB across 949 files takes a while on a slow disk; the progress bar is
+    // deliberately indeterminate here rather than lying about a percentage.
+    while (!tar.waitForFinished(200)) {
+        QCoreApplication::processEvents();
+    }
+
+    QDirIterator probe(incoming, QDir::Files, QDirIterator::Subdirectories);
+    if (!probe.hasNext()) {
+        *error = QStringLiteral("%1 unpacked to nothing.").arg(component.label());
+        QDir(incoming).removeRecursively();
+        return false;
+    }
+
+    QDir(finalDir).removeRecursively();
+    if (!QDir().rename(incoming, finalDir)) {
+        *error = QStringLiteral("Could not move %1 into place.").arg(component.label());
+        QDir(incoming).removeRecursively();
+        return false;
+    }
+    return true;
+}
+
+void SetupWindow::writeBackendState(const QString &targetDir,
+                                    const QList<shdkit::Component> &installed,
+                                    const QList<shdkit::Component> &failed) const
+{
+    // ── The file that keeps a failed download from being a dead end ────────
+    // The application reads this to know what it has, by VERSION rather than by
+    // path, and to offer a retry for what is missing. A missing backend never
+    // hides an analysis type — it offers the download.
+    QJsonArray installedArray;
+    for (const shdkit::Component &c : installed) {
+        installedArray.append(QJsonObject{
+            {QStringLiteral("name"), c.name},
+            {QStringLiteral("version"), c.version},
+            {QStringLiteral("sha256"), c.sha256},
+            {QStringLiteral("modules"), QJsonArray::fromStringList(c.modules)},
+        });
+    }
+
+    QJsonArray missingArray;
+    for (const shdkit::Component &c : failed) {
+        missingArray.append(QJsonObject{
+            {QStringLiteral("name"), c.name},
+            {QStringLiteral("version"), c.version},
+            {QStringLiteral("objectKey"), c.objectKey},
+            {QStringLiteral("size"), double(c.size)},
+            {QStringLiteral("modules"), QJsonArray::fromStringList(c.modules)},
+        });
+    }
+
+    const QJsonObject state{
+        {QStringLiteral("product"), m_manifest.product},
+        {QStringLiteral("version"), m_config.version},
+        {QStringLiteral("channel"), m_manifest.channel},
+        {QStringLiteral("baseUrl"), m_config.download.baseUrl},
+        {QStringLiteral("manifestKey"), m_config.download.manifestKey},
+        {QStringLiteral("installed"), installedArray},
+        {QStringLiteral("missing"), missingArray},
+    };
+
+    QFile file(QDir(targetDir).filePath(QStringLiteral("components.json")));
+    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        file.write(QJsonDocument(state).toJson(QJsonDocument::Indented));
+    }
 }
 
 int SetupWindow::countPayloadFiles() const
@@ -865,7 +1241,35 @@ void SetupWindow::startInstall()
         return;
     }
 
+    // ── Components, AFTER the application is on disk and working ───────────
+    // Order matters and is the whole safety property: by this point the install
+    // is complete and launchable. Anything below can fail without taking the
+    // product with it.
+    //
+    // **A failed download must still leave a working application.** The app is
+    // embedded; the backends are not. Network dies here and the user gets a
+    // working install that says "Fluids backend not installed — retry" in
+    // Settings. Never a rollback — the one thing worse than an install that
+    // fetched nothing is an install that undid itself over a solver.
+    QList<shdkit::Component> failedComponents;
+    if (m_config.download.enabled) {
+        failedComponents = fetchSelectedComponents(targetDir);
+    }
+
     finishInstall(targetDir);
+
+    if (!failedComponents.isEmpty() && !m_silent) {
+        QStringList names;
+        for (const shdkit::Component &c : failedComponents) names.append(c.label());
+        QMessageBox::warning(
+            this, m_config.appName + " Setup",
+            QStringLiteral(
+                "%1 is installed and ready to use.\n\n"
+                "These optional components could not be downloaded:\n  %2\n\n"
+                "Everything else works. You can retry from Settings inside the "
+                "application whenever you are ready — nothing needs reinstalling.")
+                .arg(m_config.appName, names.join(QStringLiteral("\n  "))));
+    }
 }
 
 void SetupWindow::finishInstall(const QString &targetDir)

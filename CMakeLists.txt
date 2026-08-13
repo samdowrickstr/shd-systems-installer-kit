@@ -19,7 +19,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Svg)
+# Network is needed for the component downloader (src/fetcher.cpp). It is linked
+# unconditionally rather than behind an option: the code is small, and a build
+# flag that changes whether the installer CAN download is a flag somebody will
+# get wrong on the one release where it matters. A product that does not set
+# `download` in its config never opens a socket.
+find_package(Qt6 REQUIRED COMPONENTS Widgets Svg Network)
 
 set(RES "${CMAKE_CURRENT_SOURCE_DIR}/resources")
 
@@ -39,6 +44,12 @@ set(SETUP_SOURCES
     src/main.cpp
     src/setupwindow.cpp
     src/setupwindow.h
+    src/manifest.cpp
+    src/manifest.h
+    src/fetcher.cpp
+    src/fetcher.h
+    src/ed25519.cpp
+    src/ed25519.h
     ${RES}/setup.qrc
 )
 
@@ -53,7 +64,7 @@ endif()
 
 qt_add_executable(AppSetup WIN32 ${SETUP_SOURCES})
 target_link_libraries(AppSetup PRIVATE
-    Qt6::Widgets Qt6::Svg
+    Qt6::Widgets Qt6::Svg Qt6::Network
     ole32 shell32 uuid advapi32
 )
 if(SHD_WHITELABEL)

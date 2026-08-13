@@ -23,6 +23,9 @@ commercial licence removes those obligations.
   detection, running-process handling, desktop + Start-Menu shortcuts and an
   Add/Remove Programs entry.
 - **Portable `.zip`** output (app only, run in place) alongside the installer.
+- **Optional component downloading** — a selection page driven by a signed
+  release manifest, fetching large optional payloads *during* the install. Off
+  unless a project asks for it; see [Downloading components](#downloading-components).
 
 ## How it works
 
@@ -166,6 +169,68 @@ The manifest can be imported by SHD OTA Fleet Manager to pre-fill a desktop
 release. Other packaging systems can emit the same schema for MSI, MSIX, DMG,
 PKG, AppImage, DEB, RPM, ZIP or TAR.GZ releases.
 
+## Downloading components
+
+**Off by default.** With no `download` block in `installer.json` the kit behaves
+exactly as it always has — one file, everything embedded, no network.
+
+Some products carry payloads that are much larger than the application itself
+and that not every customer wants. SHD Sim is the case this was built for: the
+app is ~130 MB and the OpenFOAM solver behind it is 624 MB, with eight further
+physics modules planned. Embedding all of them would mean gigabytes of solver
+delivered to somebody who only wanted one.
+
+So the installer can instead ask, and fetch what was asked for **during the
+installation**, while the user is already waiting:
+
+```jsonc
+"download": {
+  "enabled": true,
+  "baseUrl": "https://dl.shd-sim.com",
+  "manifestKey": "shdsim/stable/1.0.1/release.json",
+  "publicKey": "FXGBre2HXQ…",          // base64 Ed25519, compiled in
+  "promptTitle": "CHOOSE YOUR PHYSICS",
+  "promptHint": "Anything you skip can be added later from Settings.",
+  "components": []                      // only for -Offline, below
+}
+```
+
+The selection page is built from the manifest at runtime, so **adding a module
+is a publishing change, not an installer release**. Each option shows its
+download size, because asking somebody to accept a 624 MB download without
+telling them it is 624 MB is not asking a fair question.
+
+### What it does about the awkward parts
+
+| | |
+|---|---|
+| **Signature** | The manifest carries a detached Ed25519 signature, verified against a key **compiled into the installer**. TLS authenticates the host, not the payload — and an installer that writes fetched executables into the install folder is a supply-chain surface. Every payload is SHA-256'd before it is unpacked |
+| **Resume** | HTTP Range. A 624 MB download that dies at 610 MB and starts again is worse than one that refuses |
+| **Retry** | Backoff on transport errors only. A 404 is a wrong manifest and will still be wrong in four seconds |
+| **Proxy** | The system proxy is used explicitly. Without it the download simply times out on managed corporate machines — which is the paying audience |
+| **Disk space** | Checked before the user commits, against the download plus its unpacked size. Running out at 90% leaves a mess they clean up by hand |
+| **Failure** | **A failed download still leaves a working application.** Components are fetched *after* the app is on disk and launchable. Never a rollback |
+
+The installer writes `components.json` into the install folder recording what
+arrived and what did not, so the application can offer a retry rather than
+presenting a dead end.
+
+### Offline variant
+
+```powershell
+.\pack.ps1 -Offline
+```
+
+Embeds every archive listed in `download.components` into the payload and turns
+fetching off, producing `<Prefix>-v<ver>-Installer-offline.exe` for air-gapped
+and locked-down corporate sites. Same config, one switch — a separate offline
+config is a second thing to keep in step, and the day it drifts is the day
+somebody ships an "offline" installer that phones home.
+
+It gets no `-Installer.exe` "latest" alias and no portable zip: the two
+installers are wildly different sizes and must never be confused on a download
+page.
+
 ## Command-line modes
 
 The setup executable supports automation flags for update clients:
@@ -214,6 +279,11 @@ Stable exit codes:
 
 - `src/bootstrap.cpp` — native Win32 single-file stub (embeds + unpacks payload).
 - `src/main.cpp`, `src/setupwindow.{h,cpp}` — the config-driven Qt setup GUI.
+- `src/manifest.{h,cpp}` — release-manifest schema, parsing and signature check.
+- `src/fetcher.{h,cpp}` — component downloader: resume, retry, proxy, disk check.
+- `src/ed25519.{h,cpp}` — verify-only Ed25519 + SHA-512/SHA-256, vendored from
+  TweetNaCl (public domain). No signing code, so none can be extracted from a
+  customer's install.
 - `resources/` — `setup.qrc`, `logo.svg`, `check.svg`, `app.ico`, manifest, `.rc`.
 - `CMakeLists.txt` — builds `AppSetup.exe`.
 - `configure.ps1` - the setup wizard. `pack.ps1` - the packager.

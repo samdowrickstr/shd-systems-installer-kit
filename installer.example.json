@@ -50,6 +50,33 @@
     "dllSearchDirs": []
   },
 
+  "//download": [
+    "OPTIONAL. Omit this block entirely and the installer behaves exactly as it always has:",
+    "everything embedded, no network, no selection page.",
+    "",
+    "With it, the installer reads a signed release manifest, shows a page of physics/feature",
+    "modules with their download sizes, and fetches the selected components DURING the install.",
+    "A failed download still leaves a working application - the app is embedded, only the",
+    "components are not.",
+    "",
+    "publicKey is the base64 Ed25519 key that verifies the manifest, COMPILED IN via this file.",
+    "Generate it with the website's scripts/make-release-key.mjs. Without it the manifest is not",
+    "verified and pack.ps1 warns - an installer that writes fetched executables and cannot say",
+    "who signed them is a supply-chain surface with no lid.",
+    "",
+    "components[] is only read by `pack.ps1 -Offline`, which embeds those archives instead of",
+    "fetching them, for air-gapped sites."
+  ],
+  "download": {
+    "enabled": false,
+    "baseUrl": "https://dl.example.com",
+    "manifestKey": "myapp/stable/1.0.0/release.json",
+    "publicKey": "",
+    "promptTitle": "OPTIONAL COMPONENTS",
+    "promptHint": "Choose what to install now. Anything you skip can be added later from Settings.",
+    "components": []
+  },
+
   "qt": {
     "dir": "D:/Qt/6.8.3/mingw_64",
     "mingw": "D:/Qt/Tools/mingw1310_64/bin"

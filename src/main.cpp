@@ -58,6 +58,30 @@ bool loadConfig(InstallerConfig &config, QString *error)
         }
     }
 
+    // Component downloading. Absent -> the kit behaves exactly as it always
+    // has: everything embedded, no network, no selection page. Other SHD
+    // products use this kit and none of them asked for a downloader, so this
+    // stays opt-in rather than turning the embedded path into a special case.
+    const QJsonObject download = obj.value("download").toObject();
+    if (!download.isEmpty()) {
+        config.download.enabled = download.value("enabled").toBool(false);
+        config.download.baseUrl = download.value("baseUrl").toString();
+        config.download.manifestKey = download.value("manifestKey").toString();
+        config.download.publicKey = download.value("publicKey").toString();
+        config.download.promptTitle =
+            download.value("promptTitle").toString(QStringLiteral("OPTIONAL COMPONENTS"));
+        config.download.promptHint = download.value("promptHint").toString();
+
+        if (config.download.enabled &&
+            (config.download.baseUrl.isEmpty() || config.download.manifestKey.isEmpty())) {
+            if (error) {
+                *error = QStringLiteral(
+                    "config.json enables downloading but sets no baseUrl or manifestKey.");
+            }
+            return false;
+        }
+    }
+
     if (config.appName.isEmpty() || config.registryKey.isEmpty()) {
         if (error) *error = QStringLiteral("config.json must set appName and registryKey.");
         return false;

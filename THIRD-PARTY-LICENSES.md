@@ -5,19 +5,30 @@ Installer Kit, and the obligations they impose. **SHD Systems Ltd's own code** i
 licensed per [LICENSING.md](LICENSING.md) (AGPLv3 or commercial); the components
 below are **not** owned by SHD and keep their own licences.
 
-_Last audited: 2026-07-07._
+_Last audited: 2026-08-12 (added Qt Network and TweetNaCl for component downloading)._
 
 ## Summary
 
 | Component | Where used | Licence | Copyleft? | AGPL-compatible? | Action needed |
 |---|---|---|---|---|---|
-| **Qt 6** (Widgets, Svg, Core, Gui + platform plugins) | Linked by `AppSetup` GUI; runtime DLLs bundled by `windeployqt` in `pack.ps1` | **LGPL-3.0** (or Qt commercial) | Weak (library) | ✅ Yes | **LGPL obligations — see below** |
+| **Qt 6** (Widgets, Svg, **Network**, Core, Gui + platform plugins) | Linked by `AppSetup` GUI; runtime DLLs bundled by `windeployqt` in `pack.ps1` | **LGPL-3.0** (or Qt commercial) | Weak (library) | ✅ Yes | **LGPL obligations — see below** |
+| **TweetNaCl** (verify path only) | `src/ed25519.cpp` — release-manifest signature verification | **Public domain** | No | ✅ Yes | None. Attribution retained in the file header as a courtesy |
 | Windows API (Win32) | `bootstrap.cpp` stub | OS platform (no separate licence) | — | ✅ | None |
-| `tar` (Windows built-in) | Bundle extraction at runtime | Ships with Windows | — | ✅ | None (relies on OS-provided binary) |
+| `tar` (Windows built-in) | Bundle extraction at runtime, and component unpacking | Ships with Windows | — | ✅ | None (relies on OS-provided binary) |
 
 No copyleft-incompatible dependencies were found. There is **no** GPL/AGPL library
 that would conflict with re-licensing SHD's own code, and there is no bundled
 compression library requiring separate attribution (the stub links only Win32).
+
+**Qt Network** was added for component downloading and carries exactly the same
+LGPL-3.0 obligations as the other Qt modules — it is one more DLL in the same
+bundle, not a new licensing situation. It is noted separately only because a
+module list that silently grows is how a licence audit stops being true.
+
+**No cryptographic library is linked.** The Ed25519 verifier is vendored source,
+which is deliberate: an installer must not gain a deployment dependency in order
+to check a signature, and OpenSSL would be both a much larger obligation surface
+and another thing to keep patched in every product that uses this kit.
 
 ## Qt (LGPL-3.0) — obligations when you distribute
 

@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "manifest.h"
+
 #include <QDialog>
 #include <QPoint>
 #include <QString>
@@ -27,6 +29,43 @@ struct AppEntry {
     QCheckBox *check = nullptr; // filled in when the install UI is built
 };
 
+// One selectable physics module, built from the manifest at runtime.
+//
+// NOT hard-coded, deliberately: the whole point of driving this from the
+// manifest is that adding structural analysis is a publishing change, not an
+// installer release. A module appears here because some component in the
+// manifest said it serves it.
+struct ModuleEntry {
+    QString id;                          // "fluids"
+    QString label;                       // "Fluids" — derived, or from the manifest
+    QString description;
+    QList<shdkit::Component> components; // what to fetch if this is ticked
+    bool defaultOn = false;
+    bool embedded = false;               // already in the payload (offline build)
+    QCheckBox *check = nullptr;
+
+    qint64 downloadBytes() const {
+        qint64 n = 0;
+        for (const shdkit::Component &c : components) n += c.size;
+        return n;
+    }
+};
+
+// Where the installer fetches components from, and what it will believe.
+//
+// Absent from a config -> the kit behaves exactly as it always has: everything
+// embedded, no network, no selection page. Other SHD products use this kit and
+// none of them asked for a downloader, so the embedded path stays the default
+// rather than becoming a special case of the new one.
+struct DownloadConfig {
+    bool enabled = false;
+    QString baseUrl;        // e.g. https://dl.shd-sim.com
+    QString manifestKey;    // e.g. shdsim/stable/1.0.1/release.json
+    QString publicKey;      // base64 Ed25519, COMPILED IN via config, never fetched
+    QString promptTitle;    // "CHOOSE YOUR PHYSICS"
+    QString promptHint;
+};
+
 // All per-project data, loaded from the embedded :/setup/config.json. This is
 // what makes the installer reusable: nothing about the product is hard-coded.
 struct InstallerConfig {
@@ -40,6 +79,7 @@ struct InstallerConfig {
     bool desktopShortcut = true;
     bool startMenuShortcut = true;
     QVector<AppEntry> apps;
+    DownloadConfig download;
 
     // Full registry path for the Add/Remove Programs entry.
     QString uninstallRegPath() const;
@@ -87,6 +127,26 @@ private:
     // --- install flow ---
     void buildInstallUi();
     void runRequestedAction();
+
+    // --- component selection + fetching ---
+    // Reads the manifest and turns it into ModuleEntry rows. Returns false when
+    // the manifest could not be had or could not be trusted; the caller carries
+    // on WITHOUT a selection page rather than refusing to install, because the
+    // application is embedded and does not need the network.
+    bool loadModules(QString *whyNot);
+    void buildModuleUi(QWidget *card, QVBoxLayout *layout);
+    QList<shdkit::Component> selectedComponents() const;
+    // Downloads and unpacks selected components into the install directory.
+    // Returns the components that FAILED — an empty list means everything
+    // arrived. A non-empty list is not an install failure (see
+    // `writeBackendState`); it is a note for the app to show in Settings.
+    QList<shdkit::Component> fetchSelectedComponents(const QString &targetDir);
+    bool unpackComponent(const shdkit::Component &component, const QString &archivePath,
+                         const QString &targetDir, QString *error);
+    // Records what is installed and what is missing, for the app to read.
+    void writeBackendState(const QString &targetDir,
+                           const QList<shdkit::Component> &installed,
+                           const QList<shdkit::Component> &failed) const;
     void finishSilent(int code);
     void failSilent(int code, const QString &message);
     void refreshFooter();
@@ -140,4 +200,8 @@ private:
     QLabel *m_status = nullptr;
     QPushButton *m_primaryButton = nullptr;
     QPushButton *m_secondaryButton = nullptr;
+
+    shdkit::Manifest m_manifest;
+    QVector<ModuleEntry> m_modules;
+    QLabel *m_downloadSummary = nullptr;
 };

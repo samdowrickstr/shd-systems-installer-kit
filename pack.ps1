@@ -12,8 +12,15 @@
 #   .\pack.ps1 -Config path.json     # explicit config
 #
 # windeployqt prints harmless warnings to stderr; don't let them abort the run.
+#
+# -Offline builds the AIR-GAPPED variant: every component listed in the config's
+# `download.components` is copied INTO the payload, so the installer needs no
+# network at all. Same source tree, same config, one switch — because a separate
+# offline config is a second thing to keep in step, and the day it drifts is the
+# day somebody ships an "offline" installer that phones home.
 param(
-    [string]$Config = "installer.json"
+    [string]$Config = "installer.json",
+    [switch]$Offline
 )
 $ErrorActionPreference = "Stop"
 
@@ -276,6 +283,37 @@ $runtime = [ordered]@{
     }
     apps        = $apps
 }
+
+# Component downloading. Omitted from the runtime config entirely when the
+# project does not use it, so the installer takes the embedded path it always
+# took — other SHD products use this kit and none of them asked for a downloader.
+$dl = $cfg.PSObject.Properties['download']
+if ($dl -and $dl.Value -and $dl.Value.enabled -eq $true) {
+    if (-not $dl.Value.baseUrl)     { throw "download.enabled is true but download.baseUrl is not set." }
+    if (-not $dl.Value.manifestKey) { throw "download.enabled is true but download.manifestKey is not set." }
+
+    # The verifying key is COMPILED INTO the installer through this file. It is
+    # never fetched: a client that reads the key from the same place it reads
+    # the manifest is checking a signature against a key the attacker also
+    # supplied, which proves nothing at all.
+    if (-not $dl.Value.publicKey) {
+        Write-Warning ("download.publicKey is not set. The release manifest will NOT be " +
+                       "verified, and this installer writes fetched executables into the " +
+                       "install folder. Generate one with the website's " +
+                       "scripts/make-release-key.mjs before shipping.")
+    }
+
+    $runtime.download = [ordered]@{
+        # -Offline embeds the components, so the built installer must not then
+        # try to fetch them. Same config, opposite behaviour, one switch.
+        enabled     = -not $Offline
+        baseUrl     = "$($dl.Value.baseUrl)"
+        manifestKey = "$($dl.Value.manifestKey)"
+        publicKey   = "$($dl.Value.publicKey)"
+        promptTitle = if ($dl.Value.promptTitle) { "$($dl.Value.promptTitle)" } else { "OPTIONAL COMPONENTS" }
+        promptHint  = if ($dl.Value.promptHint) { "$($dl.Value.promptHint)" } else { "" }
+    }
+}
 $runtime | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $res "config.json") -Encoding UTF8
 
 Write-Host "[2/7] Building installer GUI (AppSetup.exe)..."
@@ -297,6 +335,32 @@ foreach ($src in $cfg.payload.sources) {
     }
 }
 Copy-Item -LiteralPath $setupExe -Destination $stage -Force
+
+# --- offline variant: carry the components instead of fetching them ----------
+# For air-gapped and locked-down corporate sites, where "our availability gates
+# installation" is not an acceptable answer. The installer finds these in
+# <payload>/components/ and treats the matching modules as already present.
+if ($Offline) {
+    $dlCfg = $cfg.PSObject.Properties['download']
+    $componentSources = @()
+    if ($dlCfg -and $dlCfg.Value -and $dlCfg.Value.PSObject.Properties['components']) {
+        $componentSources = @($dlCfg.Value.components)
+    }
+    if (-not $componentSources) {
+        throw ("-Offline needs download.components in installer.json: the list of packed " +
+               "component archives to embed. Without them the 'offline' installer would " +
+               "silently be an online one.")
+    }
+
+    $compDir = Join-Path $stage "components"
+    New-Item -ItemType Directory -Force -Path $compDir | Out-Null
+    foreach ($c in $componentSources) {
+        $cp = Resolve-CfgPath $c
+        if (-not (Test-Path -LiteralPath $cp)) { throw "offline component not found: $cp" }
+        Write-Host "        embedding $(Split-Path -Leaf $cp) ($([math]::Round((Get-Item $cp).Length/1MB,0)) MB)"
+        Copy-Item -LiteralPath $cp -Destination $compDir -Force
+    }
+}
 
 # AppSetup.exe is the kit's own Qt GUI, so it ALWAYS needs its Qt runtime and the
 # platform plugin (platforms/qwindows.dll) - independent of how the payload apps
@@ -371,23 +435,33 @@ Set-Content -LiteralPath $genH -Encoding ASCII -Value @"
 "@
 
 Write-Host "[6/7] Linking standalone installer stub..."
-$out       = Join-Path $distDir "$prefix-v$ver-Installer.exe"
+# The offline build gets its own name and NO "latest" alias. Two reasons: the
+# two files are wildly different sizes and must never be confused on a download
+# page, and a "latest" alias that sometimes means the 2 GB one is a support
+# ticket waiting to happen.
+$suffix    = if ($Offline) { "-Installer-offline" } else { "-Installer" }
+$out       = Join-Path $distDir "$prefix-v$ver$suffix.exe"
 $latestOut = Join-Path $distDir "$prefix-Installer.exe"
 if (Test-Path $out) { Remove-Item $out -Force }
 & "$mingw\g++.exe" (Join-Path $kitRoot "src\bootstrap.cpp") $rcObj `
     "-I$build" `
     -DUNICODE -D_UNICODE -O2 -s -mwindows -static -static-libgcc -static-libstdc++ `
     -o $out
-Copy-Item -LiteralPath $out -Destination $latestOut -Force
+if (-not $Offline) {
+    Copy-Item -LiteralPath $out -Destination $latestOut -Force
+}
 
 # Sign the final self-contained installer (and its 'latest' alias).
 if ($doSign) {
     Write-Host "        Signing installer..."
     Invoke-SignFile $signing $out
-    Invoke-SignFile $signing $latestOut
+    if (-not $Offline) { Invoke-SignFile $signing $latestOut }
 }
 
-$makePortable = -not ($cfg.output.portableZip -eq $false)
+# The offline run produces no portable zip. It would be the same application
+# tree the normal run already zipped, plus a components/ folder holding archives
+# rather than unpacked backends — which is not something you can "run in place".
+$makePortable = (-not ($cfg.output.portableZip -eq $false)) -and (-not $Offline)
 $portZip = $null
 if ($makePortable) {
     Write-Host "[7/7] Building portable zip (app only, no installer)..."
@@ -400,6 +474,8 @@ if ($makePortable) {
     $portZip = Join-Path $distDir "$prefix-v$ver-portable.zip"
     if (Test-Path $portZip) { Remove-Item $portZip -Force }
     Compress-Archive -Path $portApp -DestinationPath $portZip
+} elseif ($Offline) {
+    Write-Host "[7/7] Skipping portable zip (offline build - the online run already made it)."
 } else {
     Write-Host "[7/7] Skipping portable zip (output.portableZip = false)."
 }
@@ -407,8 +483,12 @@ if ($makePortable) {
 $mb = [math]::Round((Get-Item $out).Length/1MB,1)
 Write-Host ""
 Write-Host "Done."
-Write-Host "Standalone installer: $out  ($mb MB)"
-Write-Host "Latest installer:     $latestOut"
+if ($Offline) {
+    Write-Host "Offline installer:    $out  ($mb MB)  - carries every component, needs no network"
+} else {
+    Write-Host "Standalone installer: $out  ($mb MB)"
+    Write-Host "Latest installer:     $latestOut"
+}
 if ($portZip) {
     $pmb = [math]::Round((Get-Item $portZip).Length/1MB,1)
     Write-Host "Portable zip:         $portZip  ($pmb MB)"
