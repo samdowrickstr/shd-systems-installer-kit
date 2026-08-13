@@ -8,6 +8,8 @@
 #include <QDialog>
 #include <QPoint>
 #include <QString>
+
+#include "hostcapability.h"
 #include <QVector>
 
 QT_BEGIN_NAMESPACE
@@ -44,6 +46,16 @@ struct ModuleEntry {
     bool defaultOn = false;
     bool embedded = false;               // already in the payload (offline build)
     QCheckBox *check = nullptr;
+
+    // True when any component here has to run in a container, so the module is
+    // only usable on a machine that can virtualise. Drives the capability note
+    // on the page — and nothing else: a machine that cannot run it can still
+    // download it, because selection is a bandwidth choice.
+    bool needsVirtualisation() const {
+        for (const shdkit::Component &c : components)
+            if (c.needsProvisioning()) return true;
+        return false;
+    }
 
     qint64 downloadBytes() const {
         qint64 n = 0;
@@ -240,6 +252,10 @@ private:
     bool m_hasSoftwarePage = false;
 
     QWidget *m_moduleHost = nullptr;
+
+    // Gathered once, when the modules load. Re-read after the elevated fix,
+    // because the page must not go on describing facts that have changed.
+    shdkit::VirtualisationFacts m_hostFacts;
     QVBoxLayout *m_moduleLayout = nullptr;
     QLabel *m_progressTitle = nullptr;
     QLabel *m_completeTitle = nullptr;

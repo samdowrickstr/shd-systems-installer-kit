@@ -3,6 +3,8 @@
 
 #include "setupwindow.h"
 
+#include "hostcapability.h"
+
 #include "fetcher.h"
 
 #include <QApplication>
@@ -1002,6 +1004,10 @@ bool SetupWindow::loadModules(QString *whyNot)
         return false;
     }
 
+    // Asked once per install rather than per module: it runs wsl.exe, and the
+    // answer is a property of the machine rather than of any one backend.
+    m_hostFacts = shdkit::VirtualisationFacts::gather();
+
     for (const QString &id : m_manifest.modules()) {
         ModuleEntry entry;
         entry.id = id;
@@ -1116,6 +1122,57 @@ void SetupWindow::buildModuleUi(QWidget *card, QVBoxLayout *layout)
         }
         layout->addWidget(entry.check);
         connect(entry.check, &QCheckBox::toggled, this, &SetupWindow::refreshFooter);
+
+        // ── Can this machine actually run it? ──────────────────────────────
+        // Only asked of modules that need a container. Offering a gigabyte to a
+        // machine whose firmware has virtualisation switched off spends
+        // somebody's bandwidth and tells them at the end; the selection page is
+        // the last moment it is cheap to know.
+        //
+        // A negative answer UNTICKS the box and says why. It never hides it:
+        // selection is a bandwidth choice, and somebody about to walk into
+        // their BIOS must still be able to take the bytes now.
+        if (!entry.needsVirtualisation() || entry.embedded) continue;
+
+        const shdkit::VirtualisationAssessment capability =
+            shdkit::VirtualisationAssessment::of(m_hostFacts);
+
+        if (capability.verdict == shdkit::VirtualisationVerdict::Ready) continue;
+
+        if (!capability.offerByDefault) entry.check->setChecked(false);
+
+        auto *note = new QLabel(capability.summary + QStringLiteral("  ") + capability.remedy,
+                                card);
+        note->setWordWrap(true);
+        note->setStyleSheet(QStringLiteral("color:#8a5a00; font-size:11px; "
+                                           "margin-left:26px; margin-bottom:2px;"));
+        layout->addWidget(note);
+
+        if (capability.fixableWithElevation) {
+            auto *fix = new QPushButton(tr("Enable it now"), card);
+            fix->setCursor(Qt::PointingHandCursor);
+            layout->addWidget(fix, 0, Qt::AlignLeft);
+            connect(fix, &QPushButton::clicked, this, [this, fix, note]() {
+                bool restart = false;
+                QString error;
+                fix->setEnabled(false);
+                if (shdkit::enableVirtualisationFeatures(
+                        shdkit::VirtualisationAssessment::of(m_hostFacts), &restart, &error)) {
+                    note->setText(tr("Windows virtualisation features are enabled. "
+                                     "Restart when the install has finished."));
+                    note->setStyleSheet(QStringLiteral("color:#1f7a3d; font-size:11px; "
+                                                       "margin-left:26px;"));
+                    fix->hide();
+                    // Re-read: the person may have been told to restart, but
+                    // the facts on disk have changed either way and the next
+                    // page should not still be describing the old ones.
+                    m_hostFacts = shdkit::VirtualisationFacts::gather();
+                } else {
+                    note->setText(error);
+                    fix->setEnabled(true);
+                }
+            });
+        }
     }
 
     m_downloadSummary = new QLabel(card);

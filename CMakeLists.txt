@@ -48,6 +48,8 @@ set(SETUP_SOURCES
     src/manifest.h
     src/fetcher.cpp
     src/fetcher.h
+    src/hostcapability.cpp
+    src/hostcapability.h
     src/ed25519.cpp
     src/ed25519.h
     ${RES}/setup.qrc
