@@ -26,9 +26,40 @@ QStringList Manifest::modules() const
 QList<Component> Manifest::backendsFor(const QString &module) const
 {
     QList<Component> out;
+    QStringList taken;
+
     for (const Component &c : components) {
-        if (c.fetched && c.modules.contains(module)) out.append(c);
+        if (c.fetched && c.modules.contains(module)) {
+            out.append(c);
+            taken.append(c.name);
+        }
     }
+
+    // Pull in what those components cannot work without.
+    //
+    // A container solver needs the machine image it runs in, and the two are
+    // separate components on purpose: the image is ~1 GB and changes with the
+    // solver, the VM is a few hundred MB and changes almost never, so binding
+    // them into one payload would re-download the VM on every solver update.
+    // Keeping them separate is only safe if selecting one selects the other,
+    // which is what this does — otherwise the install succeeds, the customer
+    // has a gigabyte of solver, and the first run reports no virtual machine.
+    //
+    // Transitive, and cycle-safe: a requirement that names something already
+    // taken is simply skipped, so a mutual `requires` pair terminates instead
+    // of appending forever.
+    for (int i = 0; i < out.size(); ++i) {
+        for (const QString &need : out.at(i).requiresComponents) {
+            if (taken.contains(need)) continue;
+            for (const Component &c : components) {
+                if (c.name != need || !c.fetched) continue;
+                out.append(c);
+                taken.append(c.name);
+                break;
+            }
+        }
+    }
+
     return out;
 }
 
@@ -105,6 +136,25 @@ bool parseManifest(const QByteArray &json,
         c.description = o.value(QStringLiteral("description")).toString();
         c.licenceUrl = o.value(QStringLiteral("licenceUrl")).toString();
         c.fetched = o.value(QStringLiteral("fetched")).toBool(false);
+
+        // Absent means "native", which is what every manifest written before
+        // container backends existed means. Reading an unknown value as native
+        // would be worse than refusing: a container image unpacked as a plain
+        // backend is a gigabyte in the install directory and no solver, with
+        // nothing to show that anything went wrong.
+        c.runtime = o.value(QStringLiteral("runtime")).toString(QStringLiteral("native"));
+        if (c.runtime != QLatin1String("native") &&
+            c.runtime != QLatin1String("container") &&
+            c.runtime != QLatin1String("machine-image")) {
+            return fail(QStringLiteral(
+                "Component '%1' declares runtime '%2', which this installer does not "
+                "understand. A newer installer is needed for this release.")
+                            .arg(c.name, c.runtime));
+        }
+
+        for (const QJsonValue &r : o.value(QStringLiteral("requires")).toArray()) {
+            c.requiresComponents.append(r.toString());
+        }
 
         // toDouble, then cast: QJsonValue has no integer type and toInt()
         // silently truncates past 2^31. A 624 MB backend fits; a future 3 GB
