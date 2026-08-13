@@ -30,7 +30,11 @@ if (-not (Test-Path -LiteralPath $cfgPath)) {
     throw "Config not found: $cfgPath  (copy installer.example.json to installer.json and edit it)"
 }
 $cfgDir = Split-Path -Parent (Resolve-Path -LiteralPath $cfgPath)
-$cfg = Get-Content -LiteralPath $cfgPath -Raw | ConvertFrom-Json
+# -Encoding UTF8 is not optional: Windows PowerShell 5.1 reads as ANSI by
+# default, which turns every em dash in a promptHint or description into "â€"" —
+# and pack.ps1 then writes that mojibake into config.json as valid UTF-8, so the
+# installer renders it and nothing upstream looks wrong.
+$cfg = Get-Content -LiteralPath $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
 
 # Resolve a path from installer.json relative to the config file's folder.
 function Resolve-CfgPath([string]$p) {
@@ -503,7 +507,7 @@ $notes = ""
 if ($release.notesFile) {
     $notesFile = Resolve-CfgPath $release.notesFile
     if ($notesFile -and (Test-Path -LiteralPath $notesFile)) {
-        $notes = (Get-Content -LiteralPath $notesFile -Raw).Trim()
+        $notes = (Get-Content -LiteralPath $notesFile -Raw -Encoding UTF8).Trim()
     }
 }
 $artifacts = @()

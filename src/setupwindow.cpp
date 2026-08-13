@@ -32,7 +32,9 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScreen>
+#include <QScrollArea>
 #include <QSettings>
+#include <QStackedWidget>
 #include <QStandardPaths>
 #include <QSvgRenderer>
 #include <QTextStream>
@@ -541,17 +543,234 @@ void SetupWindow::runRequestedAction()
 }
 
 // ---------------------------------------------------------------------------
-// Install UI
+// Install UI — a wizard, one page per decision
+//
+// Where it goes → what goes in it → the wait → the outcome. The single page
+// this replaced put a folder picker, an app list, a network-fetched module list
+// with download sizes, a disk-space warning and the Install button in one
+// eyeful, and grew taller with every app and every published module until it
+// ran off a laptop screen.
+//
+// Splitting it buys more than room: the manifest is only fetched when the user
+// reaches the page that needs it, so the window no longer waits on a website
+// before it will appear.
 // ---------------------------------------------------------------------------
+namespace {
+
+QString stepTitle(int page)
+{
+    switch (page) {
+    case 0:  return QStringLiteral("LOCATION");
+    case 1:  return QStringLiteral("SOFTWARE");
+    case 2:  return QStringLiteral("INSTALL");
+    default: return QStringLiteral("FINISH");
+    }
+}
+
+}  // namespace
+
 void SetupWindow::buildInstallUi()
 {
-    // Size grows with the number of apps so the app list never crowds.
-    const int base = 384;
-    const int perApp = 26;
-    setFixedSize(564, base + m_config.apps.size() * perApp + 114);
+    // One size for every page. The pages themselves absorb the difference —
+    // the software page scrolls — so the window never resizes under the user
+    // and never has to guess how many modules a future release will publish.
+    setFixedSize(604, 536);
     auto *root = makeFrame(true);
 
-    auto *card = new QFrame(this);
+    m_hasSoftwarePage = !m_config.apps.isEmpty() || m_config.download.enabled;
+
+    root->addWidget(buildStepper());
+
+    m_pages = new QStackedWidget(this);
+    m_pages->addWidget(buildLocationPage());   // PageLocation
+    m_pages->addWidget(buildSoftwarePage());   // PageSoftware
+    m_pages->addWidget(buildProgressPage());   // PageProgress
+    m_pages->addWidget(buildCompletePage());   // PageComplete
+    root->addWidget(m_pages, 1);
+
+    m_sizeLabel = new QLabel(this);
+    m_sizeLabel->setWordWrap(true);
+    m_sizeLabel->setStyleSheet("color:#5a6b80;");
+    root->addWidget(m_sizeLabel);
+
+    auto *btnRow = new QHBoxLayout();
+    btnRow->addStretch(1);
+    m_backButton = new QPushButton("Back", this);
+    m_backButton->setObjectName("ghost");
+    connect(m_backButton, &QPushButton::clicked, this, &SetupWindow::goBack);
+    btnRow->addWidget(m_backButton);
+    m_secondaryButton = new QPushButton("Cancel", this);
+    m_secondaryButton->setObjectName("ghost");
+    connect(m_secondaryButton, &QPushButton::clicked, this, &QWidget::close);
+    btnRow->addWidget(m_secondaryButton);
+    m_primaryButton = new QPushButton("Next", this);
+    m_primaryButton->setCursor(Qt::PointingHandCursor);
+    m_primaryButton->setDefault(true);
+    // One connection for the life of the window: the page decides what the
+    // button means. The old flow re-wired this button as it went, and a
+    // half-rewired button is a bug you only find by clicking it.
+    connect(m_primaryButton, &QPushButton::clicked, this, &SetupWindow::onPrimaryClicked);
+    btnRow->addWidget(m_primaryButton);
+    root->addLayout(btnRow);
+
+#ifndef SHD_WHITELABEL
+    // Attribution Notice required under AGPLv3 §7(b); see ATTRIBUTION.md. It must
+    // stay visible under the free (AGPL) licence. Removal / white-label is only
+    // permitted under a commercial licence — build with -DSHD_WHITELABEL.
+    // TODO: hyperlink to SHD Systems' official URL once finalised.
+    auto *attribution = new QLabel(
+        "Powered by SHD Systems  ·  © 2026 SHD Systems Ltd", this);
+    attribution->setStyleSheet("color:#9aa7b8; font-size:11px;");
+    attribution->setWordWrap(true);
+    root->addWidget(attribution);
+#endif
+
+    refreshFooter();
+    showPage(PageLocation);
+}
+
+QWidget *SetupWindow::buildStepper()
+{
+    auto *bar = new QWidget(this);
+    auto *row = new QHBoxLayout(bar);
+    row->setContentsMargins(2, 0, 2, 2);
+    row->setSpacing(9);
+
+    m_stepPages.clear();
+    m_stepLabels.clear();
+    m_stepPages << PageLocation;
+    if (m_hasSoftwarePage) {
+        m_stepPages << PageSoftware;
+    }
+    m_stepPages << PageProgress << PageComplete;
+
+    for (int i = 0; i < m_stepPages.size(); ++i) {
+        if (i > 0) {
+            auto *sep = new QLabel(QString::fromUtf8("\xE2\x80\xBA"), bar); // ›
+            sep->setStyleSheet("color:#c3ccd8; font-size:9pt;");
+            row->addWidget(sep);
+        }
+        auto *step = new QLabel(bar);
+        m_stepLabels << step;
+        row->addWidget(step);
+    }
+    row->addStretch(1);
+    return bar;
+}
+
+void SetupWindow::updateStepper()
+{
+    if (m_stepLabels.isEmpty()) {
+        return;
+    }
+    const QString accent = m_config.accentColor.isEmpty() ? QStringLiteral("#1CA3C2")
+                                                          : m_config.accentColor;
+    const int current = m_stepPages.indexOf(currentPage());
+    for (int i = 0; i < m_stepLabels.size(); ++i) {
+        QLabel *label = m_stepLabels.at(i);
+        const bool done = current >= 0 && i < current;
+        const QString mark = done ? QString::fromUtf8("\xE2\x9C\x93")   // ✓
+                                  : QString::number(i + 1);
+        label->setText(QStringLiteral("%1  %2").arg(mark, stepTitle(m_stepPages.at(i))));
+        QString colour = QStringLiteral("#a9b4c2");  // not reached yet
+        if (i == current) {
+            colour = accent;
+        } else if (done) {
+            colour = QStringLiteral("#5a6b80");
+        }
+        label->setStyleSheet(
+            QStringLiteral("color:%1; font-size:8pt; font-weight:700; letter-spacing:1px;")
+                .arg(colour));
+    }
+}
+
+SetupWindow::Page SetupWindow::currentPage() const
+{
+    return m_pages ? static_cast<Page>(m_pages->currentIndex()) : PageLocation;
+}
+
+void SetupWindow::showPage(Page page)
+{
+    m_pages->setCurrentIndex(static_cast<int>(page));
+
+    // Nothing on the option pages should be reachable once the copy has begun,
+    // and nothing about it is cancellable half way — a page that hides its own
+    // controls is more honest than one that greys them out and hopes.
+    const bool options = page == PageLocation || page == PageSoftware;
+    m_sizeLabel->setVisible(options);
+    m_backButton->setVisible(page == PageSoftware);
+    m_secondaryButton->setEnabled(page != PageProgress);
+    m_primaryButton->setEnabled(page != PageProgress);
+
+    switch (page) {
+    case PageLocation:
+        m_secondaryButton->setText("Cancel");
+        m_primaryButton->setText(m_hasSoftwarePage ? "Next" : "Install");
+        break;
+    case PageSoftware:
+        m_secondaryButton->setText("Cancel");
+        m_primaryButton->setText("Install");
+        break;
+    case PageProgress:
+        m_secondaryButton->setText("Cancel");
+        break;
+    case PageComplete:
+        m_secondaryButton->setText("Close");
+        // The primary button's text belongs to whoever finished the install:
+        // "Launch" on success, "Try again" on failure.
+        break;
+    }
+
+    updateStepper();
+}
+
+void SetupWindow::goBack()
+{
+    if (currentPage() == PageSoftware) {
+        showPage(PageLocation);
+    }
+}
+
+void SetupWindow::onPrimaryClicked()
+{
+    switch (currentPage()) {
+    case PageLocation:
+        if (!validateLocation()) {
+            return;
+        }
+        if (m_hasSoftwarePage) {
+            showPage(PageSoftware);
+            ensureModulesUi();
+        } else {
+            startInstall();
+        }
+        break;
+    case PageSoftware:
+        startInstall();
+        break;
+    case PageProgress:
+        break;  // the button is disabled here
+    case PageComplete:
+        if (m_installFailed) {
+            m_installFailed = false;
+            showPage(PageLocation);
+            return;
+        }
+        if (!m_launchPath.isEmpty()) {
+            QProcess::startDetached(m_launchPath, {});
+        }
+        close();
+        break;
+    }
+}
+
+QWidget *SetupWindow::buildLocationPage()
+{
+    auto *page = new QWidget(this);
+    auto *outer = new QVBoxLayout(page);
+    outer->setContentsMargins(0, 0, 0, 0);
+
+    auto *card = new QFrame(page);
     card->setObjectName("card");
     auto *cl = new QVBoxLayout(card);
     cl->setContentsMargins(20, 18, 20, 20);
@@ -564,6 +783,12 @@ void SetupWindow::buildInstallUi()
     auto *locRow = new QHBoxLayout();
     locRow->setSpacing(10);
     m_pathEdit = new QLineEdit(QDir::toNativeSeparators(defaultInstallDir()), card);
+    // Show the front of the path, not the tail. A default that opens scrolled to
+    // "...\Programs\SHD Sim" hides the one part the user is checking.
+    m_pathEdit->setCursorPosition(0);
+    // The free-space warning is computed against this path, so it has to follow
+    // the path being edited rather than only the checkboxes.
+    connect(m_pathEdit, &QLineEdit::textChanged, this, &SetupWindow::refreshFooter);
     locRow->addWidget(m_pathEdit, 1);
     auto *browse = new QPushButton("Browse…", card);
     browse->setObjectName("ghost");
@@ -571,10 +796,54 @@ void SetupWindow::buildInstallUi()
     locRow->addWidget(browse);
     cl->addLayout(locRow);
 
+    auto *note = new QLabel(
+        m_config.appName
+            + " installs for your user account only — no administrator rights are needed.",
+        card);
+    note->setWordWrap(true);
+    note->setStyleSheet("color:#5a6b80; font-size:11px;");
+    cl->addWidget(note);
+
+    cl->addSpacing(8);
+    auto *optLabel = new QLabel("SHORTCUTS", card);
+    optLabel->setObjectName("section");
+    cl->addWidget(optLabel);
+
+    m_desktopCheck = new QCheckBox("Create desktop shortcut(s)", card);
+    m_desktopCheck->setChecked(m_config.desktopShortcut);
+    cl->addWidget(m_desktopCheck);
+    m_startMenuCheck = new QCheckBox("Create Start Menu shortcut(s)", card);
+    m_startMenuCheck->setChecked(m_config.startMenuShortcut);
+    cl->addWidget(m_startMenuCheck);
+    cl->addStretch(1);
+
+    outer->addWidget(card);
+    return page;
+}
+
+QWidget *SetupWindow::buildSoftwarePage()
+{
+    auto *page = new QWidget(this);
+    auto *outer = new QVBoxLayout(page);
+    outer->setContentsMargins(0, 0, 0, 0);
+
+    // Scrolled, because the module list comes from a published manifest: how
+    // many rows it has is not this installer's decision to make.
+    auto *scroll = new QScrollArea(page);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setStyleSheet("QScrollArea { border:0; background:transparent; }");
+
+    auto *card = new QFrame(scroll);
+    card->setObjectName("card");
+    auto *cl = new QVBoxLayout(card);
+    cl->setContentsMargins(20, 18, 20, 20);
+    cl->setSpacing(12);
+
     // App checkboxes: one per configured app. When there is only a single app we
     // still show it, but a lone always-on app could also be hidden by config.
     if (!m_config.apps.isEmpty()) {
-        cl->addSpacing(6);
         auto *appLabel = new QLabel("APPS TO INSTALL", card);
         appLabel->setObjectName("section");
         cl->addWidget(appLabel);
@@ -590,62 +859,87 @@ void SetupWindow::buildInstallUi()
         }
     }
 
-    // Physics modules, when this product downloads components. Built from the
-    // manifest, not hard-coded — adding structural analysis must be a
-    // publishing change, not an installer release.
-    buildModuleUi(card, cl);
+    // Physics modules, when this product downloads components. Filled in by
+    // ensureModulesUi() from the manifest, not hard-coded — adding structural
+    // analysis must be a publishing change, not an installer release.
+    m_moduleHost = new QWidget(card);
+    m_moduleLayout = new QVBoxLayout(m_moduleHost);
+    m_moduleLayout->setContentsMargins(0, 0, 0, 0);
+    m_moduleLayout->setSpacing(8);
+    cl->addWidget(m_moduleHost);
+    cl->addStretch(1);
 
-    cl->addSpacing(6);
-    auto *optLabel = new QLabel("OPTIONS", card);
-    optLabel->setObjectName("section");
-    cl->addWidget(optLabel);
+    scroll->setWidget(card);
+    outer->addWidget(scroll);
+    return page;
+}
 
-    m_desktopCheck = new QCheckBox("Create desktop shortcut(s)", card);
-    m_desktopCheck->setChecked(m_config.desktopShortcut);
-    cl->addWidget(m_desktopCheck);
-    m_startMenuCheck = new QCheckBox("Create Start Menu shortcut(s)", card);
-    m_startMenuCheck->setChecked(m_config.startMenuShortcut);
-    cl->addWidget(m_startMenuCheck);
+QWidget *SetupWindow::buildProgressPage()
+{
+    auto *page = new QWidget(this);
+    auto *outer = new QVBoxLayout(page);
+    outer->setContentsMargins(0, 0, 0, 0);
 
-    root->addWidget(card);
-    root->addStretch(1);
+    auto *card = new QFrame(page);
+    card->setObjectName("card");
+    auto *cl = new QVBoxLayout(card);
+    cl->setContentsMargins(20, 18, 20, 20);
+    cl->setSpacing(12);
 
-    m_progress = new QProgressBar(this);
+    m_progressTitle = new QLabel("Installing " + m_config.appName + "…", card);
+    m_progressTitle->setStyleSheet("color:#15314c; font-weight:700; font-size:11pt;");
+    m_progressTitle->setWordWrap(true);
+    cl->addWidget(m_progressTitle);
+
+    m_progress = new QProgressBar(card);
     m_progress->setRange(0, 100);
     m_progress->setValue(0);
     m_progress->setTextVisible(false);
-    m_progress->hide();
-    root->addWidget(m_progress);
+    cl->addWidget(m_progress);
 
-    m_status = new QLabel(this);
+    m_status = new QLabel(card);
+    m_status->setWordWrap(true);
     m_status->setStyleSheet("color:#5a6b80;");
-    root->addWidget(m_status);
-    refreshFooter();
+    cl->addWidget(m_status);
+    cl->addStretch(1);
 
-    auto *btnRow = new QHBoxLayout();
-    btnRow->addStretch(1);
-    m_secondaryButton = new QPushButton("Cancel", this);
-    m_secondaryButton->setObjectName("ghost");
-    connect(m_secondaryButton, &QPushButton::clicked, this, &QWidget::close);
-    btnRow->addWidget(m_secondaryButton);
-    m_primaryButton = new QPushButton("Install", this);
-    m_primaryButton->setCursor(Qt::PointingHandCursor);
-    m_primaryButton->setDefault(true);
-    connect(m_primaryButton, &QPushButton::clicked, this, &SetupWindow::startInstall);
-    btnRow->addWidget(m_primaryButton);
-    root->addLayout(btnRow);
+    outer->addWidget(card);
+    return page;
+}
 
-#ifndef SHD_WHITELABEL
-    // Attribution Notice required under AGPLv3 §7(b); see ATTRIBUTION.md. It must
-    // stay visible under the free (AGPL) licence. Removal / white-label is only
-    // permitted under a commercial licence — build with -DSHD_WHITELABEL.
-    // TODO: hyperlink to SHD Systems' official URL once finalised.
-    auto *attribution = new QLabel(
-        "Powered by SHD Systems  ·  © 2026 SHD Systems Ltd", this);
-    attribution->setStyleSheet("color:#9aa7b8; font-size:11px;");
-    attribution->setWordWrap(true);
-    root->addWidget(attribution);
-#endif
+QWidget *SetupWindow::buildCompletePage()
+{
+    auto *page = new QWidget(this);
+    auto *outer = new QVBoxLayout(page);
+    outer->setContentsMargins(0, 0, 0, 0);
+
+    auto *card = new QFrame(page);
+    card->setObjectName("card");
+    auto *cl = new QVBoxLayout(card);
+    cl->setContentsMargins(20, 18, 20, 20);
+    cl->setSpacing(10);
+
+    m_completeTitle = new QLabel(card);
+    m_completeTitle->setWordWrap(true);
+    m_completeTitle->setStyleSheet("color:#15314c; font-weight:700; font-size:13pt;");
+    cl->addWidget(m_completeTitle);
+
+    m_completeBody = new QLabel(card);
+    m_completeBody->setWordWrap(true);
+    m_completeBody->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_completeBody->setStyleSheet("color:#5a6b80;");
+    cl->addWidget(m_completeBody);
+
+    // Where a partial outcome gets explained: the components that did not
+    // arrive, and the fact that nothing needs reinstalling because of it.
+    m_completeDetail = new QLabel(card);
+    m_completeDetail->setWordWrap(true);
+    m_completeDetail->hide();
+    cl->addWidget(m_completeDetail);
+    cl->addStretch(1);
+
+    outer->addWidget(card);
+    return page;
 }
 
 void SetupWindow::browseForFolder()
@@ -739,6 +1033,30 @@ bool SetupWindow::loadModules(QString *whyNot)
     return !m_modules.isEmpty();
 }
 
+void SetupWindow::ensureModulesUi()
+{
+    if (m_modulesLoaded || !m_config.download.enabled) {
+        return;
+    }
+    m_modulesLoaded = true;
+
+    // Silent installs never see this page but still need the module defaults,
+    // so they come through here too — just without the reassurance.
+    QLabel *busy = nullptr;
+    if (!m_silent) {
+        busy = new QLabel(QStringLiteral("Checking for optional components…"), m_moduleHost);
+        busy->setStyleSheet(QStringLiteral("color:#5a6b80;"));
+        m_moduleLayout->addWidget(busy);
+        // Paint the page before the blocking fetch, or the user clicks Next and
+        // watches a frozen window for as long as their proxy feels like taking.
+        QCoreApplication::processEvents();
+    }
+
+    buildModuleUi(m_moduleHost, m_moduleLayout);
+    delete busy;  // removes itself from the layout
+    refreshFooter();
+}
+
 void SetupWindow::buildModuleUi(QWidget *card, QVBoxLayout *layout)
 {
     QString whyNot;
@@ -828,6 +1146,10 @@ QList<shdkit::Component> SetupWindow::selectedComponents() const
 
 void SetupWindow::refreshFooter()
 {
+    if (!m_sizeLabel) {
+        return;  // maintenance and uninstall have no options to summarise
+    }
+
     const QString self = QFileInfo(QCoreApplication::applicationFilePath()).fileName();
     qint64 bytes = 0;
     QDirIterator it(m_sourceDir, QDir::Files, QDirIterator::Subdirectories);
@@ -843,9 +1165,9 @@ void SetupWindow::refreshFooter()
     for (const shdkit::Component &c : selected) downloadBytes += c.size;
 
     const double mb = bytes / (1024.0 * 1024.0);
-    m_status->setText(QString("Requires about %1 MB of disk space   ·   Version %2")
-                          .arg(QString::number(mb + downloadBytes / (1024.0 * 1024.0), 'f', 0),
-                               m_config.version));
+    m_sizeLabel->setText(QString("Requires about %1 MB of disk space   ·   Version %2")
+                             .arg(QString::number(mb + downloadBytes / (1024.0 * 1024.0), 'f', 0),
+                                  m_config.version));
 
     if (!m_downloadSummary) return;
 
@@ -1153,18 +1475,55 @@ bool SetupWindow::copyPayloadFile(const QString &sourcePath, const QString &dest
     return true;
 }
 
-void SetupWindow::startInstall()
+void SetupWindow::optionError(const QString &message, int silentCode, Page page)
 {
-    const QString targetDir = QDir::cleanPath(QDir::fromNativeSeparators(m_pathEdit->text().trimmed()));
-    if (targetDir.isEmpty()) {
-        if (m_silent) { failSilent(SetupExitInvalidArguments, "Install location is empty."); return; }
-        QMessageBox::warning(this, m_config.appName + " Setup", "Please choose an install location.");
+    if (m_silent) {
+        failSilent(silentCode, message);
         return;
     }
+    showPage(page);
+    QMessageBox::warning(this, m_config.appName + " Setup", message);
+}
+
+bool SetupWindow::validateLocation(QString *targetOut)
+{
+    const QString targetDir =
+        QDir::cleanPath(QDir::fromNativeSeparators(m_pathEdit->text().trimmed()));
+    if (targetDir.isEmpty()) {
+        optionError("Please choose an install location.", SetupExitInvalidArguments, PageLocation);
+        return false;
+    }
     if (QDir(targetDir) == QDir(m_sourceDir)) {
-        if (m_silent) { failSilent(SetupExitInvalidArguments, "Install location matches setup source location."); return; }
-        QMessageBox::warning(this, m_config.appName + " Setup",
-                             "Please choose a different folder from the installer's own location.");
+        optionError("Please choose a different folder from the installer's own location.",
+                    SetupExitInvalidArguments, PageLocation);
+        return false;
+    }
+    if (targetOut) {
+        *targetOut = targetDir;
+    }
+    return true;
+}
+
+void SetupWindow::showInstallFailure(const QString &message)
+{
+    m_installFailed = true;
+    m_launchPath.clear();
+    m_completeTitle->setText("Setup did not finish");
+    m_completeBody->setText(message);
+    m_completeDetail->hide();
+    showPage(PageComplete);
+    m_primaryButton->setText("Try again");
+}
+
+void SetupWindow::startInstall()
+{
+    // A silent install never visits the software page, and an install with no
+    // software page never builds one — either way the module defaults have to
+    // exist before anything is selected from them.
+    ensureModulesUi();
+
+    QString targetDir;
+    if (!validateLocation(&targetDir)) {
         return;
     }
 
@@ -1176,48 +1535,27 @@ void SetupWindow::startInstall()
         }
     }
     if (!anySelected) {
-        if (m_silent) { failSilent(SetupExitInvalidArguments, "No apps selected for installation."); return; }
-        QMessageBox::warning(this, m_config.appName + " Setup",
-                             "Select at least one app to install.");
+        optionError("Select at least one app to install.", SetupExitInvalidArguments, PageSoftware);
         return;
     }
 
-    m_pathEdit->setEnabled(false);
-    for (const AppEntry &app : m_config.apps) {
-        if (app.check) app.check->setEnabled(false);
-    }
-    m_desktopCheck->setEnabled(false);
-    m_startMenuCheck->setEnabled(false);
-    m_primaryButton->setEnabled(false);
-    m_secondaryButton->setEnabled(false);
-    m_progress->show();
-    m_status->setText("Installing…");
+    m_installFailed = false;
+    m_progress->setValue(0);
+    m_progressTitle->setText("Installing " + m_config.appName + "…");
+    m_status->setText("Preparing…");
+    showPage(PageProgress);
     QCoreApplication::processEvents();
-
-    auto reenable = [this] {
-        m_pathEdit->setEnabled(true);
-        for (const AppEntry &app : m_config.apps) {
-            if (app.check) app.check->setEnabled(true);
-        }
-        m_desktopCheck->setEnabled(true);
-        m_startMenuCheck->setEnabled(true);
-        m_primaryButton->setEnabled(true);
-        m_secondaryButton->setEnabled(true);
-    };
 
     if (!QDir().mkpath(targetDir)) {
         if (m_silent) { failSilent(SetupExitFailed, "Could not create install folder."); return; }
-        QMessageBox::critical(this, m_config.appName + " Setup",
-                              "Could not create:\n" + QDir::toNativeSeparators(targetDir));
-        reenable();
+        showInstallFailure("Could not create:\n" + QDir::toNativeSeparators(targetDir));
         return;
     }
 
     if (!closeRunningInstalledApps(targetDir)) {
         if (m_silent) { failSilent(SetupExitCancelled, "Install cancelled because running apps did not close."); return; }
-        reenable();
-        m_progress->hide();
-        m_status->setText("Install cancelled. Close the app and try again.");
+        showInstallFailure("Install cancelled — " + m_config.appName
+                           + " is still running. Close it and try again.");
         return;
     }
 
@@ -1225,8 +1563,8 @@ void SetupWindow::startInstall()
     int done = 0;
     if (!copyPayload(targetDir, done, total)) {
         if (m_silent) { failSilent(SetupExitFailed, "Install failed while copying payload files."); return; }
-        reenable();
-        m_status->setText("Install failed. Close any running app windows and try again.");
+        showInstallFailure("The files could not be copied. Close any running app windows and "
+                           "try again.");
         return;
     }
 
@@ -1235,9 +1573,7 @@ void SetupWindow::startInstall()
     QString uninstError;
     if (!copyPayloadFile(QCoreApplication::applicationFilePath(), uninstPath, &uninstError)) {
         if (m_silent) { failSilent(SetupExitFailed, uninstError); return; }
-        QMessageBox::critical(this, m_config.appName + " Setup", uninstError);
-        reenable();
-        m_status->setText("Install failed. Close any running app windows and try again.");
+        showInstallFailure(uninstError);
         return;
     }
 
@@ -1256,23 +1592,13 @@ void SetupWindow::startInstall()
         failedComponents = fetchSelectedComponents(targetDir);
     }
 
-    finishInstall(targetDir);
-
-    if (!failedComponents.isEmpty() && !m_silent) {
-        QStringList names;
-        for (const shdkit::Component &c : failedComponents) names.append(c.label());
-        QMessageBox::warning(
-            this, m_config.appName + " Setup",
-            QStringLiteral(
-                "%1 is installed and ready to use.\n\n"
-                "These optional components could not be downloaded:\n  %2\n\n"
-                "Everything else works. You can retry from Settings inside the "
-                "application whenever you are ready — nothing needs reinstalling.")
-                .arg(m_config.appName, names.join(QStringLiteral("\n  "))));
-    }
+    // What could not be downloaded is reported on the finish page, not in a
+    // modal over it: it is part of the outcome, and the outcome is a page now.
+    finishInstall(targetDir, failedComponents);
 }
 
-void SetupWindow::finishInstall(const QString &targetDir)
+void SetupWindow::finishInstall(const QString &targetDir,
+                                const QList<shdkit::Component> &failed)
 {
     QString launchPath; // first installed app
     for (const AppEntry &app : m_config.apps) {
@@ -1312,17 +1638,39 @@ void SetupWindow::finishInstall(const QString &targetDir)
 
     m_progress->setValue(100);
     m_status->setText(m_config.appName + " has been installed.");
+
+    m_installFailed = false;
+    m_launchPath = launchPath;
+    m_completeTitle->setText(m_config.appName + " is installed");
+
+    QStringList lines;
+    lines << "Installed to " + QDir::toNativeSeparators(targetDir);
+    if (m_desktopCheck->isChecked() || m_startMenuCheck->isChecked()) {
+        QStringList where;
+        if (m_desktopCheck->isChecked())   where << "the desktop";
+        if (m_startMenuCheck->isChecked()) where << "the Start Menu";
+        lines << "Shortcuts added to " + where.join(" and ") + ".";
+    }
+    m_completeBody->setText(lines.join('\n'));
+
+    if (failed.isEmpty()) {
+        m_completeDetail->hide();
+    } else {
+        QStringList names;
+        for (const shdkit::Component &c : failed) names.append(c.label());
+        m_completeDetail->setStyleSheet(QStringLiteral("color:#8a6d3b; font-size:11px;"));
+        m_completeDetail->setText(
+            QStringLiteral(
+                "These optional components could not be downloaded:\n  %1\n\n"
+                "Everything else works. You can retry from Settings inside the "
+                "application whenever you are ready — nothing needs reinstalling.")
+                .arg(names.join(QStringLiteral("\n  "))));
+        m_completeDetail->show();
+    }
+
+    showPage(PageComplete);
     m_primaryButton->setText("Launch");
-    m_primaryButton->setEnabled(!launchPath.isEmpty());
-    m_secondaryButton->setText("Close");
-    m_secondaryButton->setEnabled(true);
-    m_primaryButton->disconnect();
-    connect(m_primaryButton, &QPushButton::clicked, this, [this, launchPath] {
-        if (!launchPath.isEmpty()) {
-            QProcess::startDetached(launchPath, {});
-        }
-        close();
-    });
+    m_primaryButton->setEnabled(!m_launchPath.isEmpty());
     finishSilent(SetupExitSuccess);
 }
 

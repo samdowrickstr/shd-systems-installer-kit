@@ -18,12 +18,14 @@ commercial licence removes those obligations.
   exes + the Qt runtime + this setup GUI) as a `tar.gz` payload, unpacks to a
   temp dir and runs the setup GUI. No external files.
 - **Per-user install** to `%LocalAppData%\Programs\<App>` — no admin/UAC prompt.
+- **A four-step wizard** — location and shortcuts, then software to install,
+  then the install itself, then the outcome. One decision per page.
 - **Multiple apps** in one installer, each with its own checkbox and shortcuts.
 - **Install / Update / Repair / Uninstall** flows with SemVer-aware upgrade
   detection, running-process handling, desktop + Start-Menu shortcuts and an
   Add/Remove Programs entry.
 - **Portable `.zip`** output (app only, run in place) alongside the installer.
-- **Optional component downloading** — a selection page driven by a signed
+- **Optional component downloading** — the software page is driven by a signed
   release manifest, fetching large optional payloads *during* the install. Off
   unless a project asks for it; see [Downloading components](#downloading-components).
 
@@ -195,10 +197,15 @@ installation**, while the user is already waiting:
 }
 ```
 
-The selection page is built from the manifest at runtime, so **adding a module
-is a publishing change, not an installer release**. Each option shows its
-download size, because asking somebody to accept a 624 MB download without
-telling them it is 624 MB is not asking a fair question.
+The module list on the software page is built from the manifest at runtime, so
+**adding a module is a publishing change, not an installer release**. Each
+option shows its download size, because asking somebody to accept a 624 MB
+download without telling them it is 624 MB is not asking a fair question.
+
+The manifest is only fetched when the user reaches that page, so a slow or
+unreachable download service never delays the first page of the wizard — and if
+it cannot be reached at all, the page says so and the install carries on
+without it.
 
 ### What it does about the awkward parts
 

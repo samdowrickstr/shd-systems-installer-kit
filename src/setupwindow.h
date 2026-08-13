@@ -16,6 +16,7 @@ class QLabel;
 class QLineEdit;
 class QProgressBar;
 class QPushButton;
+class QStackedWidget;
 class QVBoxLayout;
 QT_END_NAMESPACE
 
@@ -125,7 +126,25 @@ private:
     QString defaultInstallDir() const;
 
     // --- install flow ---
+    // The install is a wizard: one page per decision, in the order the user
+    // makes them. Values are the QStackedWidget indices.
+    enum Page { PageLocation = 0, PageSoftware = 1, PageProgress = 2, PageComplete = 3 };
+
     void buildInstallUi();
+    QWidget *buildStepper();
+    QWidget *buildLocationPage();
+    QWidget *buildSoftwarePage();
+    QWidget *buildProgressPage();
+    QWidget *buildCompletePage();
+    void updateStepper();
+    Page currentPage() const;
+    void showPage(Page page);
+    void onPrimaryClicked();
+    void goBack();
+    // Path checks, run when leaving the location page rather than at the end,
+    // so a bad path is rejected where it was typed.
+    bool validateLocation(QString *targetOut = nullptr);
+    void optionError(const QString &message, int silentCode, Page page);
     void runRequestedAction();
 
     // --- component selection + fetching ---
@@ -135,6 +154,12 @@ private:
     // application is embedded and does not need the network.
     bool loadModules(QString *whyNot);
     void buildModuleUi(QWidget *card, QVBoxLayout *layout);
+    // Fetches the manifest and builds the module rows the first time the user
+    // reaches the software page — NOT at construction. The fetch is a blocking
+    // round trip, and page one needs nothing from it, so doing it here is the
+    // difference between a window that appears at once and one that appears
+    // when a website says so.
+    void ensureModulesUi();
     QList<shdkit::Component> selectedComponents() const;
     // Downloads and unpacks selected components into the install directory.
     // Returns the components that FAILED — an empty list means everything
@@ -155,7 +180,10 @@ private:
     bool copyPayload(const QString &targetDir, int &doneOut, int total);
     bool copyPayloadFile(const QString &sourcePath, const QString &destPath, QString *errorMessage) const;
     int countPayloadFiles() const;
-    void finishInstall(const QString &targetDir);
+    void finishInstall(const QString &targetDir, const QList<shdkit::Component> &failed = {});
+    // Ends on the outcome page in its failed state, offering a way back to the
+    // options rather than leaving the user on a dead progress bar.
+    void showInstallFailure(const QString &message);
 
     // --- maintenance flow (repair / update / uninstall) ---
     bool readInstalledInfo();   // populate m_installedDir/Version from registry
@@ -201,7 +229,27 @@ private:
     QPushButton *m_primaryButton = nullptr;
     QPushButton *m_secondaryButton = nullptr;
 
+    // --- wizard chrome (install mode only; null in maintenance/uninstall) ---
+    QStackedWidget *m_pages = nullptr;
+    QPushButton *m_backButton = nullptr;
+    QLabel *m_sizeLabel = nullptr;
+    QVector<Page> m_stepPages;      // pages that get a step in the header
+    QVector<QLabel *> m_stepLabels; // one per entry in m_stepPages
+    // A product with no apps and no downloads has nothing to ask on page two,
+    // so it does not get one.
+    bool m_hasSoftwarePage = false;
+
+    QWidget *m_moduleHost = nullptr;
+    QVBoxLayout *m_moduleLayout = nullptr;
+    QLabel *m_progressTitle = nullptr;
+    QLabel *m_completeTitle = nullptr;
+    QLabel *m_completeBody = nullptr;
+    QLabel *m_completeDetail = nullptr;
+    QString m_launchPath;
+    bool m_installFailed = false;
+
     shdkit::Manifest m_manifest;
     QVector<ModuleEntry> m_modules;
+    bool m_modulesLoaded = false;
     QLabel *m_downloadSummary = nullptr;
 };
