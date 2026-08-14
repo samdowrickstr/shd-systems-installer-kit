@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
+﻿# SPDX-License-Identifier: AGPL-3.0-or-later
 # SPDX-FileCopyrightText: (c) 2026 SHD Systems Ltd
 
 # pack.ps1 - SHD Systems Installer Kit packager.
@@ -419,11 +419,59 @@ Write-Host "[5/7] Generating + compiling bootstrap resource..."
 $manifest = (Join-Path $res "setup.manifest") -replace '\\','/'
 $iconFwd  = (Join-Path $res "app.ico")         -replace '\\','/'
 $zipFwd   = $zip                                -replace '\\','/'
+# ── VERSIONINFO, which the stub had none of ─────────────────────────────────
+# Without this block Explorer's Properties -> Details is blank and Windows has
+# no publisher string to show for the installer: the Authenticode signature
+# carries the identity, but nothing else does. A signed binary with an empty
+# CompanyName reads as carelessly assembled, and SmartScreen reputation is
+# built on the signature together with consistent metadata rather than on the
+# signature alone.
+#
+# FILEVERSION needs four comma-separated integers, so the semantic version is
+# split and padded. Build metadata after '+' is already stripped from $baseVer;
+# a pre-release suffix like 0.2.0-rc1 would not be, hence the -replace.
+$verParts = @(($baseVer -replace '-.*$','') -split '\.') + @('0','0','0','0')
+$verQuad  = ($verParts[0..3] -join ',')
+$publisherEsc = ($cfg.product.publisher -replace '"','\"')
+# $prefix and $ver are set well above; $suffix is not, so the offline
+# variant is spelled out rather than referenced ahead of its definition.
+$exeName = "$prefix-v$ver" + $(if ($Offline) { "-Installer-offline" } else { "-Installer" }) + ".exe"
+$appNameEsc   = ($appName -replace '"','\"')
+
 $rc = @"
 #include <windows.h>
 CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "$manifest"
 IDI_ICON1 ICON "$iconFwd"
 101 RCDATA "$zipFwd"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION $verQuad
+PRODUCTVERSION $verQuad
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS 0x40004L
+FILETYPE 0x1L
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName",      "$publisherEsc"
+            VALUE "FileDescription",  "$appNameEsc Setup"
+            VALUE "FileVersion",      "$ver"
+            VALUE "InternalName",     "$appNameEsc Setup"
+            VALUE "LegalCopyright",   "Copyright (C) $((Get-Date).Year) $publisherEsc"
+            VALUE "OriginalFilename", "$exeName"
+            VALUE "ProductName",      "$appNameEsc"
+            VALUE "ProductVersion",   "$ver"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
 "@
 $rcPath = Join-Path $build "bootstrap.rc"
 Set-Content -LiteralPath $rcPath -Value $rc -Encoding ASCII
