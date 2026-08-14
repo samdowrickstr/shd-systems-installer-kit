@@ -264,6 +264,16 @@ private:
     QString m_launchPath;
     bool m_installFailed = false;
 
+    // Why each component failed, in the order they failed, as "Label — reason".
+    //
+    // These reasons used to go to qWarning() and nowhere else: the stub links as
+    // a GUI-subsystem binary, so there is no stderr, and the finish page listed
+    // only the component names. A rename bug that reported "could not be
+    // downloaded" after downloading and unpacking perfectly therefore took a
+    // system-wide OutputDebugString capture to read a message the installer had
+    // already written. The user gets the reason now.
+    QStringList m_componentFailures;
+
     shdkit::Manifest m_manifest;
     QVector<ModuleEntry> m_modules;
     bool m_modulesLoaded = false;

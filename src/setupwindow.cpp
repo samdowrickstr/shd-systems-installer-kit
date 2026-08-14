@@ -1260,6 +1260,7 @@ void SetupWindow::refreshFooter()
 QList<shdkit::Component> SetupWindow::fetchSelectedComponents(const QString &targetDir)
 {
     QList<shdkit::Component> failed;
+    m_componentFailures.clear();
     const QList<shdkit::Component> selected = selectedComponents();
     if (selected.isEmpty()) {
         writeBackendState(targetDir, {}, {});
@@ -1296,6 +1297,7 @@ QList<shdkit::Component> SetupWindow::fetchSelectedComponents(const QString &tar
         const shdkit::FetchResult fetched = fetcher.fetch(component, cacheDir);
         if (!fetched.ok) {
             qWarning("%s", qPrintable(fetched.error));
+            m_componentFailures.append(component.label() + QStringLiteral(" — ") + fetched.error);
             failed.append(component);
             continue;
         }
@@ -1306,6 +1308,7 @@ QList<shdkit::Component> SetupWindow::fetchSelectedComponents(const QString &tar
         QString error;
         if (!unpackComponent(component, fetched.path, targetDir, &error)) {
             qWarning("%s", qPrintable(error));
+            m_componentFailures.append(component.label() + QStringLiteral(" — ") + error);
             failed.append(component);
             continue;
         }
@@ -1361,8 +1364,24 @@ bool SetupWindow::unpackComponent(const shdkit::Component &component,
         QCoreApplication::processEvents();
     }
 
-    QDirIterator probe(incoming, QDir::Files, QDirIterator::Subdirectories);
-    if (!probe.hasNext()) {
+    // ── The probe MUST be destroyed before the rename below ────────────────
+    // QDirIterator opens a Win32 search handle on the first hasNext() and holds
+    // it until it is destroyed. Windows refuses to rename a directory while a
+    // search handle inside it is live, so leaving the iterator at function scope
+    // made the rename fail *every time* with access denied - after a perfectly
+    // good 183 MB download and a perfectly good extraction.
+    //
+    // That is what shipped in 0.1.1: both backends downloaded, both unpacked,
+    // and both were then reported as "could not be downloaded", which is the one
+    // thing that had not gone wrong. Measured directly - renaming the same
+    // directory succeeds with no handle open, fails with ERROR_ACCESS_DENIED
+    // while one is, and succeeds again once it is closed.
+    bool unpackedNothing = true;
+    {
+        QDirIterator probe(incoming, QDir::Files, QDirIterator::Subdirectories);
+        unpackedNothing = !probe.hasNext();
+    }
+    if (unpackedNothing) {
         *error = QStringLiteral("%1 unpacked to nothing.").arg(component.label());
         QDir(incoming).removeRecursively();
         return false;
@@ -1713,15 +1732,20 @@ void SetupWindow::finishInstall(const QString &targetDir,
     if (failed.isEmpty()) {
         m_completeDetail->hide();
     } else {
-        QStringList names;
-        for (const shdkit::Component &c : failed) names.append(c.label());
+        // The reason, not just the name. "Could not be downloaded" was also
+        // simply wrong for anything that failed while unpacking, which is the
+        // half of this step most likely to break on a particular machine.
+        QStringList detail = m_componentFailures;
+        if (detail.isEmpty()) {
+            for (const shdkit::Component &c : failed) detail.append(c.label());
+        }
         m_completeDetail->setStyleSheet(QStringLiteral("color:#8a6d3b; font-size:11px;"));
         m_completeDetail->setText(
             QStringLiteral(
-                "These optional components could not be downloaded:\n  %1\n\n"
+                "These optional components could not be installed:\n  %1\n\n"
                 "Everything else works. You can retry from Settings inside the "
                 "application whenever you are ready — nothing needs reinstalling.")
-                .arg(names.join(QStringLiteral("\n  "))));
+                .arg(detail.join(QStringLiteral("\n  "))));
         m_completeDetail->show();
     }
 
