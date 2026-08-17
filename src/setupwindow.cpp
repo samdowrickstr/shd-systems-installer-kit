@@ -1259,11 +1259,17 @@ void SetupWindow::refreshFooter()
 
 QList<shdkit::Component> SetupWindow::fetchSelectedComponents(const QString &targetDir)
 {
+    return fetchComponents(targetDir, selectedComponents());
+}
+
+QList<shdkit::Component> SetupWindow::fetchComponents(
+    const QString &targetDir, const QList<shdkit::Component> &selected,
+    const QList<shdkit::Component> &alreadyInstalled)
+{
     QList<shdkit::Component> failed;
     m_componentFailures.clear();
-    const QList<shdkit::Component> selected = selectedComponents();
     if (selected.isEmpty()) {
-        writeBackendState(targetDir, {}, {});
+        writeBackendState(targetDir, alreadyInstalled, {});
         return failed;
     }
 
@@ -1285,7 +1291,7 @@ QList<shdkit::Component> SetupWindow::fetchSelectedComponents(const QString &tar
         QCoreApplication::processEvents();
     });
 
-    QList<shdkit::Component> installed;
+    QList<shdkit::Component> installed = alreadyInstalled;
 
     for (const shdkit::Component &component : selected) {
         m_progress->setValue(0);
@@ -1760,33 +1766,17 @@ void SetupWindow::finishInstall(const QString &targetDir,
 // ---------------------------------------------------------------------------
 void SetupWindow::buildMaintenanceUi()
 {
-    setFixedSize(520, 372);
+    // Taller than the choice page needs, because the change page shares the
+    // window and the window must not resize under the user — the same reasoning
+    // as buildInstallUi, which sizes for its longest page and lets that page
+    // scroll.
+    setFixedSize(520, 470);
     auto *root = makeFrame(false);
 
-    const bool update = shouldUpdateToInstaller(m_installedVersion, m_config.version);
-
-    auto *msg = new QLabel(m_config.appName + " is already installed on this computer.", this);
-    msg->setWordWrap(true);
-    msg->setStyleSheet("color:#15314c; font-weight:600; font-size:11pt;");
-    root->addWidget(msg);
-
-    auto *info = new QLabel(this);
-    info->setWordWrap(true);
-    info->setStyleSheet("color:#5a6b80;");
-    const QString ver = m_installedVersion.isEmpty() ? QString()
-                                                     : QString("Installed version %1   ·   ").arg(m_installedVersion);
-    info->setText(ver + QDir::toNativeSeparators(m_installedDir));
-    root->addWidget(info);
-
-    auto *choose = new QLabel(this);
-    choose->setWordWrap(true);
-    choose->setStyleSheet("color:#5a6b80;");
-    choose->setText(update
-        ? QString("This installer is version %1. Choose <b>Update</b> to upgrade, or <b>Uninstall</b> to remove it.").arg(m_config.version)
-        : QString("Choose <b>Repair</b> to reinstall the files, or <b>Uninstall</b> to remove it."));
-    root->addWidget(choose);
-
-    root->addStretch(1);
+    m_maintPages = new QStackedWidget(this);
+    m_maintPages->addWidget(buildMaintChoicePage());   // MaintChoice
+    m_maintPages->addWidget(buildMaintChangePage());   // MaintChange
+    root->addWidget(m_maintPages, 1);
 
     m_progress = new QProgressBar(this);
     m_progress->setRange(0, 100);
@@ -1800,21 +1790,30 @@ void SetupWindow::buildMaintenanceUi()
     auto *btnRow = new QHBoxLayout();
     m_secondaryButton = new QPushButton("Uninstall", this);
     m_secondaryButton->setObjectName("ghost");
-    connect(m_secondaryButton, &QPushButton::clicked, this, [this] {
-        const QString u = QDir(m_installedDir).filePath("uninstall.exe");
-        if (QFile::exists(u)) {
-            QProcess::startDetached(u, {"--uninstall"});
-        }
-        close();
-    });
+    connect(m_secondaryButton, &QPushButton::clicked, this, &SetupWindow::onMaintSecondary);
     btnRow->addWidget(m_secondaryButton);
     btnRow->addStretch(1);
-    m_primaryButton = new QPushButton(update ? QString("Update to %1").arg(m_config.version.split('+').first()) : QString("Repair"), this);
+
+    // Only offered when there is a download source to change anything from. An
+    // all-embedded build of this kit has no components to add and no manifest
+    // to list them, and a button that opens an empty page is worse than none.
+    if (m_config.download.enabled) {
+        m_changeButton = new QPushButton("Change", this);
+        m_changeButton->setObjectName("ghost");
+        m_changeButton->setCursor(Qt::PointingHandCursor);
+        connect(m_changeButton, &QPushButton::clicked, this,
+                [this] { showMaintPage(MaintChange); });
+        btnRow->addWidget(m_changeButton);
+    }
+
+    m_primaryButton = new QPushButton(this);
     m_primaryButton->setCursor(Qt::PointingHandCursor);
     m_primaryButton->setDefault(true);
-    connect(m_primaryButton, &QPushButton::clicked, this, &SetupWindow::doRepairOrUpdate);
+    connect(m_primaryButton, &QPushButton::clicked, this, &SetupWindow::onMaintPrimary);
     btnRow->addWidget(m_primaryButton);
     root->addLayout(btnRow);
+
+    showMaintPage(MaintChoice);
 
 #ifndef SHD_WHITELABEL
     // Attribution Notice required under AGPLv3 §7(b); see ATTRIBUTION.md. It must
@@ -1919,6 +1918,7 @@ void SetupWindow::doRepairOrUpdate()
 
     m_primaryButton->setEnabled(false);
     m_secondaryButton->setEnabled(false);
+    if (m_changeButton) m_changeButton->setEnabled(false);
     m_progress->show();
     m_status->setText(update ? "Updating files…" : "Repairing files…");
     QCoreApplication::processEvents();
@@ -1997,6 +1997,339 @@ void SetupWindow::doRepairOrUpdate()
         close();
     });
     finishSilent(SetupExitSuccess);
+}
+
+// ---------------------------------------------------------------------------
+// Change: add or remove solver backends on an install that already exists
+// ---------------------------------------------------------------------------
+QStringList SetupWindow::installedComponentNames(const QString &dir) const
+{
+    QFile file(QDir(dir).filePath(QStringLiteral("components.json")));
+    if (!file.open(QIODevice::ReadOnly)) return {};
+    const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+
+    QStringList out;
+    for (const QJsonValue &value : root.value(QStringLiteral("installed")).toArray()) {
+        const QString name = value.toObject().value(QStringLiteral("name")).toString();
+        if (!name.isEmpty()) out.append(name);
+    }
+    return out;
+}
+
+bool SetupWindow::removeComponent(const QString &targetDir, const QString &name,
+                                  QString *error) const
+{
+    const QString dir = QDir(targetDir).filePath(name);
+    if (!QFileInfo::exists(dir)) return true;   // already gone; nothing to undo
+
+    if (!QDir(dir).removeRecursively()) {
+        *error = QStringLiteral("Could not remove %1. It may be in use.")
+                     .arg(QDir::toNativeSeparators(dir));
+        return false;
+    }
+    return true;
+}
+
+QWidget *SetupWindow::buildMaintChoicePage()
+{
+    auto *page = new QWidget(this);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(12);
+
+    const bool update = shouldUpdateToInstaller(m_installedVersion, m_config.version);
+
+    auto *msg = new QLabel(m_config.appName + " is already installed on this computer.", page);
+    msg->setWordWrap(true);
+    msg->setStyleSheet("color:#15314c; font-weight:600; font-size:11pt;");
+    layout->addWidget(msg);
+
+    auto *info = new QLabel(page);
+    info->setWordWrap(true);
+    info->setStyleSheet("color:#5a6b80;");
+    const QString ver = m_installedVersion.isEmpty() ? QString()
+                                                     : QString("Installed version %1   ·   ").arg(m_installedVersion);
+    info->setText(ver + QDir::toNativeSeparators(m_installedDir));
+    layout->addWidget(info);
+
+    auto *choose = new QLabel(page);
+    choose->setWordWrap(true);
+    choose->setStyleSheet("color:#5a6b80;");
+    const QString changeClause = m_config.download.enabled
+        ? QStringLiteral(", <b>Change</b> to add or remove analysis types")
+        : QString();
+    choose->setText(update
+        ? QString("This installer is version %1. Choose <b>Update</b> to upgrade%2, or "
+                  "<b>Uninstall</b> to remove it.").arg(m_config.version, changeClause)
+        : QString("Choose <b>Repair</b> to reinstall the files%1, or <b>Uninstall</b> to "
+                  "remove it.").arg(changeClause));
+    layout->addWidget(choose);
+
+    layout->addStretch(1);
+    return page;
+}
+
+QWidget *SetupWindow::buildMaintChangePage()
+{
+    auto *page = new QWidget(this);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(10);
+
+    auto *heading = new QLabel(QStringLiteral("Analysis types"), page);
+    heading->setStyleSheet("color:#15314c; font-weight:600; font-size:11pt;");
+    layout->addWidget(heading);
+
+    m_changeHint = new QLabel(
+        QStringLiteral("Tick to add, untick to remove. Removing one frees the disk space and "
+                       "does not touch anything you have already solved."),
+        page);
+    m_changeHint->setWordWrap(true);
+    m_changeHint->setStyleSheet("color:#5a6b80; font-size:11px;");
+    layout->addWidget(m_changeHint);
+
+    // Scrolls, for the same reason the software page does: the number of
+    // analysis types is a publishing decision, and a fifth family must not push
+    // the buttons off the bottom of a fixed window.
+    auto *scroll = new QScrollArea(page);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto *inner = new QWidget(scroll);
+    m_changeList = new QVBoxLayout(inner);
+    m_changeList->setContentsMargins(0, 0, 0, 0);
+    m_changeList->setSpacing(6);
+    m_changeList->addStretch(1);
+    scroll->setWidget(inner);
+    layout->addWidget(scroll, 1);
+
+    return page;
+}
+
+bool SetupWindow::populateChangePage()
+{
+    if (m_changeLoaded) return true;
+
+    // The manifest is what says which analysis types exist and what they cost.
+    // The maintenance page never needed it, so this is usually the first fetch
+    // of the run and it can fail — offline, or a signature that does not verify.
+    m_status->setText(QStringLiteral("Checking what is available…"));
+    QCoreApplication::processEvents();
+
+    QString whyNot;
+    if (m_manifest.isEmpty() && !loadModules(&whyNot)) {
+        m_status->setText(whyNot.isEmpty()
+                              ? QStringLiteral("Could not read the list of available backends.")
+                              : whyNot);
+        return false;
+    }
+    m_status->clear();
+
+    const QStringList have = installedComponentNames(m_installedDir);
+
+    m_changeChecks.clear();
+    for (const ModuleEntry &entry : m_modules) {
+        // Installed means every component behind it is here. Any one of them
+        // absent and the analysis type cannot be run, so offering it as
+        // "installed" would be a promise the install cannot keep.
+        bool complete = !entry.components.isEmpty();
+        for (const shdkit::Component &c : entry.components) {
+            if (!have.contains(c.name)) { complete = false; break; }
+        }
+
+        const QString text =
+            QStringLiteral("%1  —  %2")
+                .arg(entry.label, complete ? QStringLiteral("installed")
+                                           : shdkit::formatSize(entry.downloadBytes()));
+
+        auto *check = new QCheckBox(text, m_changeList->parentWidget());
+        check->setChecked(complete);
+        check->setEnabled(!entry.embedded);
+        // Before the trailing stretch, so the rows stay at the top.
+        m_changeList->insertWidget(m_changeList->count() - 1, check);
+        m_changeChecks.append({entry.id, check});
+    }
+
+    if (m_changeChecks.isEmpty()) {
+        m_status->setText(QStringLiteral("This build has no downloadable backends."));
+        return false;
+    }
+
+    m_changeLoaded = true;
+    return true;
+}
+
+void SetupWindow::showMaintPage(MaintPage page)
+{
+    if (page == MaintChange && !populateChangePage()) {
+        return;   // stay put; the status line says why
+    }
+
+    m_maintPages->setCurrentIndex(static_cast<int>(page));
+
+    const bool update = shouldUpdateToInstaller(m_installedVersion, m_config.version);
+    if (page == MaintChange) {
+        m_primaryButton->setText(QStringLiteral("Apply"));
+        m_secondaryButton->setText(QStringLiteral("Back"));
+    } else {
+        m_primaryButton->setText(update
+            ? QString("Update to %1").arg(m_config.version.split('+').first())
+            : QStringLiteral("Repair"));
+        m_secondaryButton->setText(QStringLiteral("Uninstall"));
+    }
+    if (m_changeButton) m_changeButton->setVisible(page == MaintChoice);
+}
+
+void SetupWindow::onMaintPrimary()
+{
+    if (m_maintPages->currentIndex() == static_cast<int>(MaintChange)) {
+        // Ticked types -> the components behind them, deduplicated: the material
+        // library serves all four, and asking for two of them must not queue it
+        // twice or, worse, list it as removable because one of the four is off.
+        QList<shdkit::Component> wanted;
+        QStringList seen;
+        for (const auto &pair : m_changeChecks) {
+            if (!pair.second->isChecked()) continue;
+            for (const ModuleEntry &entry : m_modules) {
+                if (entry.id != pair.first) continue;
+                for (const shdkit::Component &c : entry.components) {
+                    if (seen.contains(c.name)) continue;
+                    seen.append(c.name);
+                    wanted.append(c);
+                }
+            }
+        }
+        doChange(wanted);
+        return;
+    }
+    doRepairOrUpdate();
+}
+
+void SetupWindow::onMaintSecondary()
+{
+    if (m_maintPages->currentIndex() == static_cast<int>(MaintChange)) {
+        showMaintPage(MaintChoice);
+        return;
+    }
+
+    const QString u = QDir(m_installedDir).filePath("uninstall.exe");
+    if (QFile::exists(u)) {
+        QProcess::startDetached(u, {"--uninstall"});
+    }
+    close();
+}
+
+void SetupWindow::doChange(const QList<shdkit::Component> &wanted)
+{
+    const QStringList have = installedComponentNames(m_installedDir);
+
+    QStringList wantedNames;
+    for (const shdkit::Component &c : wanted) wantedNames.append(c.name);
+
+    QList<shdkit::Component> toAdd;
+    QList<shdkit::Component> keep;
+    for (const shdkit::Component &c : wanted) {
+        if (have.contains(c.name)) keep.append(c);
+        else                       toAdd.append(c);
+    }
+
+    QStringList toRemove;
+    for (const QString &name : have) {
+        if (!wantedNames.contains(name)) toRemove.append(name);
+    }
+
+    if (toAdd.isEmpty() && toRemove.isEmpty()) {
+        m_status->setText(QStringLiteral("Nothing to change."));
+        return;
+    }
+
+    // A backend cannot be replaced or deleted while the application has its
+    // executables open, and the same check the update path uses says so once
+    // rather than failing file by file.
+    if (!closeRunningInstalledApps(m_installedDir)) {
+        m_status->setText(QStringLiteral("Cancelled. Close ") + m_config.appName
+                          + QStringLiteral(" and try again."));
+        return;
+    }
+
+    m_primaryButton->setEnabled(false);
+    m_secondaryButton->setEnabled(false);
+    if (m_changeButton) m_changeButton->setEnabled(false);
+    m_progress->show();
+    QCoreApplication::processEvents();
+
+    // Removals first, and they are cheap: doing them before a download means a
+    // machine swapping one backend for a larger one needs the difference in
+    // free space rather than the sum.
+    QStringList removeErrors;
+    for (const QString &name : toRemove) {
+        m_status->setText(QStringLiteral("Removing %1…").arg(name));
+        QCoreApplication::processEvents();
+        QString error;
+        if (!removeComponent(m_installedDir, name, &error)) removeErrors.append(error);
+    }
+
+    // What survives, as components rather than names, so components.json can be
+    // written whole. Anything removed is simply absent from it.
+    QList<shdkit::Component> stillInstalled = keep;
+    for (const QString &name : have) {
+        if (toRemove.contains(name)) continue;
+        if (wantedNames.contains(name)) continue;   // already in `keep`
+        // Installed, still wanted, but not in the manifest any more. Keep the
+        // directory and say nothing: a component withdrawn from publication is
+        // not a reason to delete a working backend from someone's machine.
+        shdkit::Component orphan;
+        orphan.name = name;
+        stillInstalled.append(orphan);
+    }
+
+    QList<shdkit::Component> failed;
+    if (!toAdd.isEmpty()) {
+        failed = fetchComponents(m_installedDir, toAdd, stillInstalled);
+    } else {
+        writeBackendState(m_installedDir, stillInstalled, {});
+    }
+
+    qint64 bytes = 0;
+    QDirIterator it(m_installedDir, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) { it.next(); bytes += it.fileInfo().size(); }
+    writeUninstallInfo(m_installedDir, static_cast<int>(bytes / 1024));
+
+    m_progress->setValue(100);
+
+    QStringList said;
+    if (!toAdd.isEmpty()) {
+        said.append(QStringLiteral("%1 added").arg(toAdd.size() - failed.size()));
+    }
+    if (!toRemove.isEmpty()) {
+        said.append(QStringLiteral("%1 removed").arg(toRemove.size() - removeErrors.size()));
+    }
+    m_status->setText(said.isEmpty() ? QStringLiteral("Nothing changed.")
+                                     : said.join(QStringLiteral(", ")) + QStringLiteral("."));
+
+    if (!failed.isEmpty() || !removeErrors.isEmpty()) {
+        QMessageBox::warning(this, m_config.appName + " Setup",
+                             (m_componentFailures + removeErrors).join(QStringLiteral("\n")));
+    }
+
+    m_primaryButton->setEnabled(true);
+    m_secondaryButton->setEnabled(true);
+    if (m_changeButton) m_changeButton->setEnabled(true);
+
+    // Back to the choice page, with the outcome still on the status line. The
+    // ticked boxes are now stale — every one of them says "installed" or a
+    // download size that has just changed — so the page is rebuilt from
+    // components.json the next time it is asked for rather than re-shown.
+    const QString outcome = m_status->text();
+    m_changeLoaded = false;
+    m_changeChecks.clear();
+    while (m_changeList->count() > 1) {
+        QLayoutItem *item = m_changeList->takeAt(0);
+        delete item->widget();
+        delete item;
+    }
+    showMaintPage(MaintChoice);
+    m_status->setText(outcome);
 }
 
 // ---------------------------------------------------------------------------

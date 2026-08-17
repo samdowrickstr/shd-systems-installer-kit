@@ -6,6 +6,7 @@
 #include "manifest.h"
 
 #include <QDialog>
+#include <QPair>
 #include <QPoint>
 #include <QString>
 
@@ -178,6 +179,15 @@ private:
     // arrived. A non-empty list is not an install failure (see
     // `writeBackendState`); it is a note for the app to show in Settings.
     QList<shdkit::Component> fetchSelectedComponents(const QString &targetDir);
+    // The same download-and-unpack loop over an EXPLICIT list, so the change
+    // page can fetch what was just ticked rather than what the install page's
+    // checkboxes say — in maintenance mode those checkboxes do not exist.
+    // `alreadyInstalled` is carried into components.json unchanged: the state
+    // file is the whole picture, and writing only what this run fetched is how
+    // adding one backend would erase the record of the other four.
+    QList<shdkit::Component> fetchComponents(const QString &targetDir,
+                                             const QList<shdkit::Component> &wanted,
+                                             const QList<shdkit::Component> &alreadyInstalled = {});
     bool unpackComponent(const shdkit::Component &component, const QString &archivePath,
                          const QString &targetDir, QString *error);
     // Records what is installed and what is missing, for the app to read.
@@ -222,6 +232,42 @@ private:
     // The AppEntry whose exe matches name, or nullptr if it is not an app exe.
     const AppEntry *appForExe(const QString &exeName) const;
 
+    // --- change flow (add / remove backends on an existing install) ---
+    //
+    // Repair and Update deliberately do not touch components: repair copies the
+    // payload back, and the payload is the application. That left no way at all
+    // to add a backend to an install that skipped it, or to reclaim the 624 MB
+    // one takes — the first-run page was the only place the question was ever
+    // asked, and it is asked once.
+    // Maintenance is a wizard, like the install: the change page is a decision
+    // with a Back, not a modal interruption. Both pages live in one stack under
+    // one button row, so the progress bar and status line below them are shared
+    // and the window never resizes under the user.
+    //
+    // A QDialog was tried first, only because makeFrame() puts the layout on the
+    // window itself and Qt will not accept a second one — but that is an
+    // argument for a stack, which is what the install flow already uses, not for
+    // a second window.
+    enum MaintPage { MaintChoice = 0, MaintChange = 1 };
+    QWidget *buildMaintChoicePage();
+    QWidget *buildMaintChangePage();
+    void showMaintPage(MaintPage page);
+    // Fills the change page from the manifest. Deferred until the page is asked
+    // for: the maintenance page needs nothing from the network, and fetching a
+    // manifest to build a page nobody opened is the difference between a window
+    // that appears at once and one that appears when a website says so.
+    bool populateChangePage();
+    // One connection each for the life of the window; the page decides what the
+    // button means. Re-wiring a button as the flow moves is a bug you only find
+    // by clicking it.
+    void onMaintPrimary();
+    void onMaintSecondary();
+    void doChange(const QList<shdkit::Component> &wanted);
+    // What <dir>/components.json says is installed. Read rather than inferred
+    // from the directories on disk: a half-unpacked folder is a directory too.
+    QStringList installedComponentNames(const QString &dir) const;
+    bool removeComponent(const QString &targetDir, const QString &name, QString *error) const;
+
     enum class Mode { Install, Maintenance, Uninstall };
 
     InstallerConfig m_config;
@@ -234,6 +280,16 @@ private:
     QPoint m_dragPos;
 
     QLineEdit *m_pathEdit = nullptr;
+    QPushButton *m_changeButton = nullptr;
+    QStackedWidget *m_maintPages = nullptr;
+    QVBoxLayout *m_changeList = nullptr;   // the checkboxes go in here
+    QLabel *m_changeHint = nullptr;
+    bool m_changeLoaded = false;
+    // Module id -> its checkbox on the change dialog. The same unit the
+    // first-run page offers, so adding Thermal later is the same question,
+    // worded the same way, as choosing it during the install.
+    QList<QPair<QString, QCheckBox *>> m_changeChecks;
+
     QCheckBox *m_desktopCheck = nullptr;
     QCheckBox *m_startMenuCheck = nullptr;
     QProgressBar *m_progress = nullptr;
