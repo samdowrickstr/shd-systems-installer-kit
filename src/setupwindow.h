@@ -11,6 +11,7 @@
 #include <QString>
 
 #include "hostcapability.h"
+#include "telemetry.h"
 #include <QVector>
 
 QT_BEGIN_NAMESPACE
@@ -83,6 +84,12 @@ struct DownloadConfig {
 // All per-project data, loaded from the embedded :/setup/config.json. This is
 // what makes the installer reusable: nothing about the product is hard-coded.
 struct InstallerConfig {
+    // Reporting that an install happened. Absent -> nothing is sent and no
+    // socket is opened; see src/telemetry.h for what it carries and why it can
+    // carry it without asking. Declared first so the reason it exists is read
+    // before the fields it sits among.
+    shdkit::TelemetryConfig telemetry;
+
     QString appName;      // canonical product name (install folder, reg entry)
     QString displayName;  // title shown in the header (may omit brand if in logo)
     QString subtitle;     // small caps line under the title, e.g. "SETUP"

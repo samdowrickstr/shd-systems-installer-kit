@@ -1721,6 +1721,16 @@ void SetupWindow::finishInstall(const QString &targetDir,
     m_progress->setValue(100);
     m_status->setText(m_config.appName + " has been installed.");
 
+    // Anonymous, identifier-free, and inert unless a product configured it.
+    //
+    // Here rather than at the start of the install, because "how many people
+    // installed this" should not count the ones where it failed halfway and
+    // left them with nothing. Blocking for at most three seconds, on a page
+    // that has already finished — see src/telemetry.h for why it cannot be
+    // fired and forgotten from here.
+    shdkit::reportInstallRun(m_config.telemetry, QStringLiteral("install"),
+                             m_config.version);
+
     m_installFailed = false;
     m_launchPath = launchPath;
     m_completeTitle->setText(m_config.appName + " is installed");
@@ -2387,6 +2397,17 @@ void SetupWindow::startUninstall()
     m_progress->show();
     m_status->setText("Removing…");
     QCoreApplication::processEvents();
+
+    // Reported BEFORE anything is removed, and before the self-deleting script
+    // below is spawned. Once that script is running this process is on a clock
+    // it does not control, and a request begun there would be killed with it.
+    //
+    // Uninstalls are the churn signal and the one number that cannot be
+    // inferred from anything else: an install that stops reporting has either
+    // been removed or is simply not being opened, and those are very different
+    // problems.
+    shdkit::reportInstallRun(m_config.telemetry, QStringLiteral("uninstall"),
+                             m_config.version);
 
     // Remove shortcuts.
     for (const QString &lnk : shortcutPaths()) {

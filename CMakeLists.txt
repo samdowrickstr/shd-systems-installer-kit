@@ -52,6 +52,8 @@ set(SETUP_SOURCES
     src/hostcapability.h
     src/ed25519.cpp
     src/ed25519.h
+    src/telemetry.cpp
+    src/telemetry.h
     ${RES}/setup.qrc
 )
 

@@ -58,6 +58,30 @@ bool loadConfig(InstallerConfig &config, QString *error)
         }
     }
 
+    // Reporting that an install happened. Absent -> nothing is sent and no
+    // socket is opened, the same posture as the downloader below and for the
+    // same reason: several products use this kit and none of them asked for a
+    // counter. What it carries, and why it can carry it without asking, is in
+    // src/telemetry.h.
+    const QJsonObject telemetry = obj.value("telemetry").toObject();
+    if (!telemetry.isEmpty()) {
+        config.telemetry.enabled = telemetry.value("enabled").toBool(false);
+        config.telemetry.endpoint = telemetry.value("endpoint").toString();
+        config.telemetry.productCode = telemetry.value("productCode").toString();
+        config.telemetry.channel = telemetry.value("channel").toString(QStringLiteral("stable"));
+
+        // Enabled with nowhere to send is a configuration mistake, and a silent
+        // one — the install would succeed and the number would stay at zero
+        // forever. Refused at load, like the downloader's missing baseUrl.
+        if (config.telemetry.enabled && config.telemetry.endpoint.isEmpty()) {
+            if (error) {
+                *error = QStringLiteral(
+                    "config.json enables install reporting but sets no endpoint.");
+            }
+            return false;
+        }
+    }
+
     // Component downloading. Absent -> the kit behaves exactly as it always
     // has: everything embedded, no network, no selection page. Other SHD
     // products use this kit and none of them asked for a downloader, so this
