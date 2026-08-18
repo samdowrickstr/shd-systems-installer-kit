@@ -146,13 +146,23 @@ bool createShortcut(const QString &linkPath, const QString &target, const QStrin
                                                                         QStringLiteral("%%")));
     if (!args.isEmpty()) exec += QLatin1Char(' ') + args;
 
+    // Name= is what the menu shows, so it is the human title — NOT the file's
+    // basename, which shortcutFileName() has deliberately lowercased and
+    // hyphenated into an identifier. Taking the basename put "shd-sim" and
+    // "uninstall-shd-sim" in the applications menu of the first test install.
+    //
+    // `description` is the title the caller passed for every shortcut this kit
+    // creates ("SHD Sim", "Uninstall SHD Sim"); the basename is the fallback
+    // only if a caller ever passes none.
+    const QString title =
+        description.isEmpty() ? QFileInfo(linkPath).completeBaseName() : description;
+
     QTextStream ts(&f);
     ts.setEncoding(QStringConverter::Utf8);
     ts << "[Desktop Entry]\n"
        << "Type=Application\n"
        << "Version=1.0\n"
-       << "Name=" << QFileInfo(linkPath).completeBaseName() << "\n";
-    if (!description.isEmpty()) ts << "Comment=" << description << "\n";
+       << "Name=" << title << "\n";
     ts << "Exec=" << exec << "\n"
        << "Path=" << workingDir << "\n"
        << "Terminal=false\n"

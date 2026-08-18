@@ -267,11 +267,25 @@ SetupWindow::SetupWindow(const InstallerConfig &config, SetupAction action, bool
 
 QString SetupWindow::defaultInstallDir() const
 {
+#ifdef Q_OS_WIN
     QString base = qEnvironmentVariable("LOCALAPPDATA");
     if (base.isEmpty()) {
         base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     }
     return QDir(base).filePath("Programs/" + m_config.appName);
+#else
+    // ~/.local/share/<appName>, and NOT the Windows shape.
+    //
+    // AppDataLocation on Linux folds in organisationName and applicationName,
+    // which main.cpp sets to the publisher and "<appName> Setup" — so the
+    // Windows expression produced
+    //   ~/.local/share/SHD Systems Ltd/SHD Sim Setup/Programs/SHD Sim
+    // which names the installer twice, calls a Linux directory "Programs", and
+    // buries the application four levels down. GenericDataLocation is the
+    // XDG data dir itself, with nothing folded in.
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    return QDir(base).filePath(m_config.appName);
+#endif
 }
 
 const AppEntry *SetupWindow::appForExe(const QString &exeName) const
@@ -1304,15 +1318,23 @@ bool SetupWindow::unpackComponent(const shdkit::Component &component,
 
     // Windows 10+ ships bsdtar as tar.exe and it reads zip as well as tar.gz —
     // the same tool the bootstrap stub already relies on, so this adds no
-    // dependency. bsdtar returns non-zero on harmless root-entry warnings, so
-    // success is judged by the result rather than the exit code.
+    // dependency. Every Linux has GNU tar on PATH. bsdtar returns non-zero on
+    // harmless root-entry warnings, so success is judged by the result rather
+    // than the exit code.
+    //
+    // Resolved rather than named: hardcoding "tar.exe" made every backend
+    // download fail on Linux with "Could not run tar.exe", after the install
+    // had otherwise succeeded — so the app was installed and permanently unable
+    // to fetch a solver.
+    const QString tarProgram = platform::executableName(QStringLiteral("tar"));
     QProcess tar;
     tar.setWorkingDirectory(incoming);
-    tar.start(QStringLiteral("tar.exe"),
+    tar.start(tarProgram,
               {QStringLiteral("-xf"), QDir::toNativeSeparators(archivePath),
                QStringLiteral("-C"), QDir::toNativeSeparators(incoming)});
     if (!tar.waitForStarted(15000)) {
-        *error = QStringLiteral("Could not run tar.exe to unpack %1.").arg(component.label());
+        *error = QStringLiteral("Could not run %1 to unpack %2.")
+                     .arg(tarProgram, component.label());
         QDir(incoming).removeRecursively();
         return false;
     }
@@ -2425,8 +2447,32 @@ void SetupWindow::writeUninstallInfo(const QString &targetDir, int sizeKb) const
 
 void SetupWindow::removeUninstallInfo() const
 {
-    QSettings reg(m_config.uninstallRegPath(), installRecordFormat());
-    reg.clear();
+    const QString path = m_config.uninstallRegPath();
+    {
+        QSettings reg(path, installRecordFormat());
+        reg.clear();
+        // Scoped so the destructor flushes before the file is removed below.
+        // Without the scope, QSettings writes the (empty) file back out on
+        // destruction and undoes the removal.
+    }
+
+    if (platform::installRecordIsRegistry()) return;
+
+    // clear() empties the file but leaves it, and its parent directories, in
+    // the user's data directory. An empty record is harmless — it reads back as
+    // "not installed", which is true — but leaving litter behind after an
+    // uninstall is exactly the thing a per-user installer promises not to do.
+    //
+    // Only the directories WE made, and only while they are empty: rmdir fails
+    // on a non-empty directory, which is the desired outcome if another product
+    // from the same publisher is still installed beside this one.
+    QFile::remove(path);
+    QDir dir = QFileInfo(path).absoluteDir();
+    const QString appDir = dir.absolutePath();
+    dir.cdUp();
+    const QString publisherDir = dir.absolutePath();
+    QDir().rmdir(appDir);
+    QDir().rmdir(publisherDir);
 }
 
 QString SetupWindow::startMenuDir() const
