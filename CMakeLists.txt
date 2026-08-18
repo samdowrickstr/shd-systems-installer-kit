@@ -54,6 +54,8 @@ set(SETUP_SOURCES
     src/ed25519.h
     src/telemetry.cpp
     src/telemetry.h
+    src/platform.cpp
+    src/platform.h
     ${RES}/setup.qrc
 )
 
@@ -66,11 +68,23 @@ if(WIN32)
     list(APPEND SETUP_SOURCES ${CMAKE_CURRENT_BINARY_DIR}/setup.rc)
 endif()
 
-qt_add_executable(AppSetup WIN32 ${SETUP_SOURCES})
-target_link_libraries(AppSetup PRIVATE
-    Qt6::Widgets Qt6::Svg Qt6::Network
-    ole32 shell32 uuid advapi32
-)
+# WIN32 selects the GUI subsystem so no console window appears behind the
+# wizard. It is meaningless elsewhere and CMake ignores it, but naming it
+# conditionally says which platform it is for.
+if(WIN32)
+    qt_add_executable(AppSetup WIN32 ${SETUP_SOURCES})
+else()
+    qt_add_executable(AppSetup ${SETUP_SOURCES})
+endif()
+
+target_link_libraries(AppSetup PRIVATE Qt6::Widgets Qt6::Svg Qt6::Network)
+
+if(WIN32)
+    # COM for IShellLink, the shell for the known-folder and ShellExecute paths.
+    # These were linked unconditionally and are the reason this target could not
+    # be configured on Linux at all: the link failed long before any source did.
+    target_link_libraries(AppSetup PRIVATE ole32 shell32 uuid advapi32)
+endif()
 if(SHD_WHITELABEL)
     target_compile_definitions(AppSetup PRIVATE SHD_WHITELABEL)
 endif()

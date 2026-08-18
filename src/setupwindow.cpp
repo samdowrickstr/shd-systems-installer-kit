@@ -40,25 +40,50 @@
 #include <QStandardPaths>
 #include <QSvgRenderer>
 #include <QTextStream>
+#include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include "platform.h"
+
+#ifdef Q_OS_WIN
 #include <windows.h>
 #include <tlhelp32.h>
 #include <shlobj.h>
 #include <shellapi.h>
 #include <objbase.h>
+#endif
 
 #include <string>
+
+namespace {
+
+// Which QSettings backend the install record uses.
+//
+// NativeFormat on Windows means the registry, which is the whole point there.
+// NativeFormat on Linux would ALSO work — it would silently put the record in
+// ~/.config under an organisation name QSettings derives itself — and that is
+// exactly why this is explicit: the record would land somewhere other than the
+// path `platform::installRecordPath()` reports, and the two would disagree
+// about where the install is recorded without either being obviously wrong.
+QSettings::Format installRecordFormat()
+{
+    return platform::installRecordIsRegistry() ? QSettings::NativeFormat : QSettings::IniFormat;
+}
+
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // InstallerConfig
 // ---------------------------------------------------------------------------
 QString InstallerConfig::uninstallRegPath() const
 {
-    return QStringLiteral(
-               "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\")
-           + registryKey;
+    // Named for what it is on Windows, where it is a registry path that
+    // Add/Remove Programs reads. On Linux `platform` returns a file path
+    // instead and `installRecordFormat()` below picks the matching
+    // QSettings::Format — there is no registry, and the thing that puts the
+    // application in a menu is the .desktop entry, not this.
+    return platform::installRecordPath(publisher, registryKey);
 }
 
 QStringList InstallerConfig::appExeNames() const
@@ -72,11 +97,11 @@ QStringList InstallerConfig::appExeNames() const
 
 namespace {
 
-struct RunningAppProcess {
-    DWORD pid = 0;
-    QString exeName;
-    QString path;
-};
+// Finding and closing processes running out of the install directory moved to
+// `platform`: enumerating them is Toolhelp32 or /proc, and asking one to close
+// is a posted WM_CLOSE or a SIGTERM. The name is kept so the call sites below
+// read as they did.
+using RunningAppProcess = platform::RunningProcess;
 
 QString semVerWithoutBuild(const QString &version)
 {
@@ -176,80 +201,11 @@ QString cleanComparablePath(const QString &path)
     return QDir::cleanPath(QDir::fromNativeSeparators(path)).toCaseFolded();
 }
 
-QString processImagePath(DWORD pid)
-{
-    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!process) {
-        return QString();
-    }
-
-    wchar_t buffer[32768] = {};
-    DWORD size = static_cast<DWORD>(sizeof(buffer) / sizeof(buffer[0]));
-    QString path;
-    if (QueryFullProcessImageNameW(process, 0, buffer, &size)) {
-        path = QString::fromWCharArray(buffer, static_cast<int>(size));
-    }
-    CloseHandle(process);
-    return QDir::fromNativeSeparators(path);
-}
-
 // Enumerate processes whose image is one of our app exes running from targetDir.
 QList<RunningAppProcess> runningInstalledAppProcesses(const QString &targetDir,
                                                       const QStringList &appExes)
 {
-    QStringList wantedPaths;
-    for (const QString &exe : appExes) {
-        wantedPaths << cleanComparablePath(QDir(targetDir).filePath(exe));
-    }
-
-    QList<RunningAppProcess> processes;
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) {
-        return processes;
-    }
-
-    PROCESSENTRY32W entry = {};
-    entry.dwSize = sizeof(entry);
-    if (Process32FirstW(snapshot, &entry)) {
-        do {
-            const QString exeName = QString::fromWCharArray(entry.szExeFile);
-            bool isAppExe = false;
-            for (const QString &exe : appExes) {
-                if (exeName.compare(exe, Qt::CaseInsensitive) == 0) {
-                    isAppExe = true;
-                    break;
-                }
-            }
-            if (!isAppExe) {
-                continue;
-            }
-
-            const QString path = processImagePath(entry.th32ProcessID);
-            if (wantedPaths.contains(cleanComparablePath(path))) {
-                processes.append({entry.th32ProcessID, exeName, path});
-            }
-        } while (Process32NextW(snapshot, &entry));
-    }
-
-    CloseHandle(snapshot);
-    return processes;
-}
-
-BOOL CALLBACK postCloseToProcessWindow(HWND window, LPARAM param)
-{
-    DWORD windowPid = 0;
-    GetWindowThreadProcessId(window, &windowPid);
-    if (windowPid == static_cast<DWORD>(param)) {
-        PostMessageW(window, WM_CLOSE, 0, 0);
-    }
-    return TRUE;
-}
-
-void requestProcessesClose(const QList<RunningAppProcess> &processes)
-{
-    for (const RunningAppProcess &process : processes) {
-        EnumWindows(postCloseToProcessWindow, static_cast<LPARAM>(process.pid));
-    }
+    return platform::processesRunningFrom(targetDir, appExes);
 }
 
 bool waitForInstalledAppsToExit(const QString &targetDir, const QStringList &appExes, int timeoutMs)
@@ -260,21 +216,17 @@ bool waitForInstalledAppsToExit(const QString &targetDir, const QStringList &app
         if (runningInstalledAppProcesses(targetDir, appExes).isEmpty()) {
             return true;
         }
+        // processEvents already yields for up to 100 ms; QThread::msleep is the
+        // portable form of the extra pause that followed it.
         QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
-        Sleep(100);
+        QThread::msleep(100);
     }
     return runningInstalledAppProcesses(targetDir, appExes).isEmpty();
 }
 
 void terminateInstalledApps(const QString &targetDir, const QStringList &appExes)
 {
-    for (const RunningAppProcess &processInfo : runningInstalledAppProcesses(targetDir, appExes)) {
-        HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, processInfo.pid);
-        if (process) {
-            TerminateProcess(process, 0);
-            CloseHandle(process);
-        }
-    }
+    platform::terminateProcesses(runningInstalledAppProcesses(targetDir, appExes));
 }
 } // namespace
 
@@ -346,7 +298,7 @@ bool SetupWindow::wantExe(const QString &exeName) const
 
 bool SetupWindow::readInstalledInfo()
 {
-    QSettings reg(m_config.uninstallRegPath(), QSettings::NativeFormat);
+    QSettings reg(m_config.uninstallRegPath(), installRecordFormat());
     m_installedDir = QDir::fromNativeSeparators(reg.value("InstallLocation").toString());
     m_installedVersion = reg.value("DisplayVersion").toString();
     if (m_installedDir.isEmpty() || !QDir(m_installedDir).exists()) {
@@ -529,7 +481,7 @@ void SetupWindow::runRequestedAction()
             if (m_silent) {
                 args << "--silent";
             }
-            QProcess::startDetached(QDir(m_installedDir).filePath("uninstall.exe"), args);
+            QProcess::startDetached(QDir(m_installedDir).filePath(platform::executableName("uninstall")), args);
             finishSilent(SetupExitSuccess);
             return;
         }
@@ -1651,7 +1603,7 @@ void SetupWindow::startInstall()
     }
 
     // Drop a copy of ourselves as the uninstaller.
-    const QString uninstPath = QDir(targetDir).filePath("uninstall.exe");
+    const QString uninstPath = QDir(targetDir).filePath(platform::executableName("uninstall"));
     QString uninstError;
     if (!copyPayloadFile(QCoreApplication::applicationFilePath(), uninstPath, &uninstError)) {
         if (m_silent) { failSilent(SetupExitFailed, uninstError); return; }
@@ -1688,12 +1640,12 @@ void SetupWindow::finishInstall(const QString &targetDir,
         const QString exePath = QDir(targetDir).filePath(app.exe);
         if (m_desktopCheck->isChecked()) {
             const QString desktop = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
-            createShortcut(QDir(desktop).filePath(app.name + ".lnk"), exePath, QString(), targetDir, app.name);
+            createShortcut(QDir(desktop).filePath(platform::shortcutFileName(app.name)), exePath, QString(), targetDir, app.name);
         }
         if (m_startMenuCheck->isChecked()) {
             const QString smDir = startMenuDir();
             QDir().mkpath(smDir);
-            createShortcut(QDir(smDir).filePath(app.name + ".lnk"), exePath, QString(), targetDir, app.name);
+            createShortcut(QDir(smDir).filePath(platform::shortcutFileName(app.name)), exePath, QString(), targetDir, app.name);
         }
         if (launchPath.isEmpty()) {
             launchPath = exePath;
@@ -1703,8 +1655,8 @@ void SetupWindow::finishInstall(const QString &targetDir,
     if (m_startMenuCheck->isChecked()) {
         const QString smDir = startMenuDir();
         QDir().mkpath(smDir);
-        createShortcut(QDir(smDir).filePath("Uninstall " + m_config.appName + ".lnk"),
-                       QDir(targetDir).filePath("uninstall.exe"), "--uninstall", targetDir,
+        createShortcut(QDir(smDir).filePath(platform::shortcutFileName("Uninstall " + m_config.appName)),
+                       QDir(targetDir).filePath(platform::executableName("uninstall")), "--uninstall", targetDir,
                        "Uninstall " + m_config.appName);
     }
 
@@ -1716,7 +1668,7 @@ void SetupWindow::finishInstall(const QString &targetDir,
 
     // Ask the shell to refresh icons so the new app/shortcut icon shows without
     // waiting for the Windows icon cache to expire.
-    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+    platform::notifyApplicationsChanged(startMenuDir());
 
     m_progress->setValue(100);
     m_status->setText(m_config.appName + " has been installed.");
@@ -1851,7 +1803,7 @@ bool SetupWindow::closeRunningInstalledApps(const QString &targetDir)
             m_status->setText("Closing " + m_config.appName + "...");
         }
         QCoreApplication::processEvents();
-        requestProcessesClose(running);
+        platform::requestProcessesClose(running);
         return waitForInstalledAppsToExit(targetDir, appExes, 30000);
     }
 
@@ -1880,7 +1832,7 @@ bool SetupWindow::closeRunningInstalledApps(const QString &targetDir)
     }
     QCoreApplication::processEvents();
 
-    requestProcessesClose(running);
+    platform::requestProcessesClose(running);
     if (waitForInstalledAppsToExit(targetDir, appExes, 10000)) {
         return true;
     }
@@ -1920,7 +1872,7 @@ void SetupWindow::doRepairOrUpdate()
     const QString desktop = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
     bool desktopExisted = false;
     for (const AppEntry &app : m_config.apps) {
-        if (QFile::exists(QDir(desktop).filePath(app.name + ".lnk"))) {
+        if (QFile::exists(QDir(desktop).filePath(platform::shortcutFileName(app.name)))) {
             desktopExisted = true;
             break;
         }
@@ -1956,7 +1908,7 @@ void SetupWindow::doRepairOrUpdate()
         return;
     }
 
-    const QString uninstPath = QDir(target).filePath("uninstall.exe");
+    const QString uninstPath = QDir(target).filePath(platform::executableName("uninstall"));
     QString uninstError;
     if (!copyPayloadFile(QCoreApplication::applicationFilePath(), uninstPath, &uninstError)) {
         if (m_silent) { failSilent(SetupExitFailed, uninstError); return; }
@@ -1975,15 +1927,15 @@ void SetupWindow::doRepairOrUpdate()
     for (const AppEntry &app : m_config.apps) {
         const QString exePath = QDir(target).filePath(app.exe);
         if (!QFile::exists(exePath)) continue;
-        createShortcut(QDir(smDir).filePath(app.name + ".lnk"), exePath, QString(), target, app.name);
+        createShortcut(QDir(smDir).filePath(platform::shortcutFileName(app.name)), exePath, QString(), target, app.name);
         if (desktopExisted) {
-            createShortcut(QDir(desktop).filePath(app.name + ".lnk"), exePath, QString(), target, app.name);
+            createShortcut(QDir(desktop).filePath(platform::shortcutFileName(app.name)), exePath, QString(), target, app.name);
         }
         if (launchPath.isEmpty()) {
             launchPath = exePath;
         }
     }
-    createShortcut(QDir(smDir).filePath("Uninstall " + m_config.appName + ".lnk"), uninstPath, "--uninstall",
+    createShortcut(QDir(smDir).filePath(platform::shortcutFileName("Uninstall " + m_config.appName)), uninstPath, "--uninstall",
                    target, "Uninstall " + m_config.appName);
 
     qint64 bytes = 0;
@@ -2222,7 +2174,7 @@ void SetupWindow::onMaintSecondary()
         return;
     }
 
-    const QString u = QDir(m_installedDir).filePath("uninstall.exe");
+    const QString u = QDir(m_installedDir).filePath(platform::executableName("uninstall"));
     if (QFile::exists(u)) {
         QProcess::startDetached(u, {"--uninstall"});
     }
@@ -2409,42 +2361,31 @@ void SetupWindow::startUninstall()
     shdkit::reportInstallRun(m_config.telemetry, QStringLiteral("uninstall"),
                              m_config.version);
 
-    // Remove shortcuts.
+    // Remove shortcuts. `shortcutPaths()` now names the menu entries as well as
+    // the desktop ones, individually.
     for (const QString &lnk : shortcutPaths()) {
-        QFile::remove(lnk);
+        platform::removeShortcut(lnk);
     }
+
+#ifdef Q_OS_WIN
+    // The Start Menu folder is ours — created as Programs\<appName> — so
+    // removing what is left of it is correct and tidies any stray entry.
+    //
+    // Deliberately NOT done on Linux, where the same call returns
+    // ~/.local/share/applications: the directory the desktop environment keeps
+    // every application's launcher in. Recursively deleting it would uninstall
+    // this product and take the user's entire applications menu with it.
     QDir(startMenuDir()).removeRecursively();
+#endif
+
     removeUninstallInfo();
 
-    // The install folder holds this running uninstaller + its loaded Qt DLLs, so
-    // it can't delete itself directly. Write a tiny PowerShell helper that waits
-    // for THIS process to exit (by PID), removes the folder, then deletes itself,
-    // and launch it hidden.
-    const QString dir = QDir::toNativeSeparators(QCoreApplication::applicationDirPath());
-    const QString ps1 = QDir::toNativeSeparators(QDir(QDir::tempPath()).filePath("appsetup_cleanup.ps1"));
-    QFile sf(ps1);
-    if (sf.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QTextStream ts(&sf);
-        ts << "Wait-Process -Id " << QCoreApplication::applicationPid()
-           << " -Timeout 30 -ErrorAction SilentlyContinue\r\n"
-           << "Start-Sleep -Milliseconds 400\r\n"
-           << "Remove-Item -LiteralPath '" << dir << "' -Recurse -Force -ErrorAction SilentlyContinue\r\n"
-           << "Remove-Item -LiteralPath '" << ps1 << "' -Force -ErrorAction SilentlyContinue\r\n";
-        sf.close();
-
-        std::wstring cmdLine =
-            QString("powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"%1\"")
-                .arg(ps1).toStdWString();
-        std::wstring cwd = QDir::toNativeSeparators(QDir::tempPath()).toStdWString();
-        STARTUPINFOW si = {};
-        si.cb = sizeof(si);
-        PROCESS_INFORMATION pi = {};
-        if (CreateProcessW(nullptr, cmdLine.data(), nullptr, nullptr, FALSE,
-                           CREATE_NO_WINDOW, nullptr, cwd.c_str(), &si, &pi)) {
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-        }
-    }
+    // The install folder holds this running uninstaller and the Qt libraries it
+    // has mapped, so it cannot delete itself directly. Both platforms spawn a
+    // helper that waits for THIS process to exit by pid and then removes the
+    // folder; the helper is PowerShell or /bin/sh and the waiting is
+    // Wait-Process or a kill(2) poll. See platform::scheduleSelfDelete.
+    platform::scheduleSelfDelete(QCoreApplication::applicationDirPath());
 
     m_status->setText(m_config.appName + " has been removed.");
     finishSilent(SetupExitSuccess);
@@ -2457,33 +2398,15 @@ void SetupWindow::startUninstall()
 bool SetupWindow::createShortcut(const QString &linkPath, const QString &target, const QString &args,
                                  const QString &workingDir, const QString &description) const
 {
-    bool ok = false;
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    IShellLinkW *psl = nullptr;
-    if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
-                                   IID_IShellLinkW, reinterpret_cast<void **>(&psl)))) {
-        psl->SetPath(reinterpret_cast<const wchar_t *>(QDir::toNativeSeparators(target).utf16()));
-        // Point the shortcut icon explicitly at the target exe's first icon.
-        psl->SetIconLocation(reinterpret_cast<const wchar_t *>(QDir::toNativeSeparators(target).utf16()), 0);
-        psl->SetWorkingDirectory(reinterpret_cast<const wchar_t *>(QDir::toNativeSeparators(workingDir).utf16()));
-        psl->SetDescription(reinterpret_cast<const wchar_t *>(description.utf16()));
-        if (!args.isEmpty()) {
-            psl->SetArguments(reinterpret_cast<const wchar_t *>(args.utf16()));
-        }
-        IPersistFile *ppf = nullptr;
-        if (SUCCEEDED(psl->QueryInterface(IID_IPersistFile, reinterpret_cast<void **>(&ppf)))) {
-            ok = SUCCEEDED(ppf->Save(reinterpret_cast<const wchar_t *>(linkPath.utf16()), TRUE));
-            ppf->Release();
-        }
-        psl->Release();
-    }
-    CoUninitialize();
-    return ok;
+    // Kept as a member so every call site reads the same as it did; the
+    // mechanism moved to `platform` because a .lnk through COM and a .desktop
+    // through QTextStream have nothing in common but their purpose.
+    return platform::createShortcut(linkPath, target, args, workingDir, description);
 }
 
 void SetupWindow::writeUninstallInfo(const QString &targetDir, int sizeKb) const
 {
-    QSettings reg(m_config.uninstallRegPath(), QSettings::NativeFormat);
+    QSettings reg(m_config.uninstallRegPath(), installRecordFormat());
     const QString nativeDir = QDir::toNativeSeparators(targetDir);
     reg.setValue("DisplayName", m_config.appName);
     reg.setValue("DisplayVersion", m_config.version);
@@ -2494,7 +2417,7 @@ void SetupWindow::writeUninstallInfo(const QString &targetDir, int sizeKb) const
         reg.setValue("DisplayIcon", QDir::toNativeSeparators(QDir(targetDir).filePath(iconExe)));
     }
     reg.setValue("UninstallString",
-                 QString("\"%1\" --uninstall").arg(QDir::toNativeSeparators(QDir(targetDir).filePath("uninstall.exe"))));
+                 QString("\"%1\" --uninstall").arg(QDir::toNativeSeparators(QDir(targetDir).filePath(platform::executableName("uninstall")))));
     reg.setValue("EstimatedSize", sizeKb);
     reg.setValue("NoModify", 1);
     reg.setValue("NoRepair", 1);
@@ -2502,23 +2425,42 @@ void SetupWindow::writeUninstallInfo(const QString &targetDir, int sizeKb) const
 
 void SetupWindow::removeUninstallInfo() const
 {
-    QSettings reg(m_config.uninstallRegPath(), QSettings::NativeFormat);
+    QSettings reg(m_config.uninstallRegPath(), installRecordFormat());
     reg.clear();
 }
 
 QString SetupWindow::startMenuDir() const
 {
-    const QString programs = QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation);
-    return QDir(programs).filePath(m_config.appName);
+    // A per-product folder under the Start Menu on Windows; on Linux the same
+    // call returns the flat ~/.local/share/applications, because the
+    // freedesktop menu groups by the Categories= line inside each entry and a
+    // directory per vendor would be a folder nothing reads.
+    //
+    // That difference matters at ONE call site: the uninstaller does
+    // `QDir(startMenuDir()).removeRecursively()`, which is right when the
+    // directory belongs to us and catastrophic when it is the user's whole
+    // applications directory. See uninstall(), which no longer does that.
+    return platform::menuDir(m_config.appName);
 }
 
 QStringList SetupWindow::shortcutPaths() const
 {
     const QString desktop = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
+    const QString menu = startMenuDir();
     QStringList paths;
     for (const AppEntry &app : m_config.apps) {
-        paths << QDir(desktop).filePath(app.name + ".lnk");
+        paths << QDir(desktop).filePath(platform::shortcutFileName(app.name));
+        // The menu entries are listed INDIVIDUALLY rather than left to a
+        // directory removal. On Windows the Start Menu folder is ours and
+        // deleting it wholesale was correct; on Linux `startMenuDir()` is the
+        // user's entire ~/.local/share/applications, shared with every other
+        // application they have installed. Naming each file is the only form of
+        // this that is safe on both.
+        paths << QDir(menu).filePath(platform::shortcutFileName(app.name));
     }
-    paths << QDir(desktop).filePath(m_config.appName + ".lnk"); // legacy single-app shortcut
+    paths << QDir(desktop).filePath(platform::shortcutFileName(m_config.appName)); // legacy single-app shortcut
+    paths << QDir(menu).filePath(platform::shortcutFileName(m_config.appName));
+    paths << QDir(menu).filePath(
+        platform::shortcutFileName(QStringLiteral("Uninstall ") + m_config.appName));
     return paths;
 }

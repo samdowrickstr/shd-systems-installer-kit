@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: (c) 2026 SHD Systems Ltd
 
 #include "setupwindow.h"
+#include "platform.h"
 
 #include <QApplication>
 #include <QByteArray>
@@ -49,7 +50,13 @@ bool loadConfig(InstallerConfig &config, QString *error)
     for (const QJsonValue &value : obj.value("apps").toArray()) {
         const QJsonObject appObj = value.toObject();
         AppEntry app;
-        app.exe = appObj.value("exe").toString();
+        // Normalised once, here, so nothing downstream has to think about it.
+        // Configs are authored for Windows and carry "foo.exe"; on Linux the
+        // same entry has to mean "foo". Doing it at the parse boundary means
+        // one installer.json describes both platforms and every later use of
+        // `app.exe` — the shortcut target, the installed-check, the icon — is
+        // already right.
+        app.exe = platform::executableName(appObj.value("exe").toString());
         app.name = appObj.value("name").toString(app.exe);
         app.description = appObj.value("description").toString();
         app.defaultOn = appObj.value("default").toBool(true);
