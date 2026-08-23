@@ -14,8 +14,7 @@ version, and **any installer or application produced using it** — that has an
 interactive user interface must display the following **Attribution Notice**:
 
 - **Text:** `Powered by SHD Systems`
-- **Link:** the notice must hyperlink to `https://shdsystems.example` (replace
-  with SHD Systems Ltd's official URL before release).
+- **Link:** the notice must hyperlink to `https://shd-sim.com`.
 - **Logo (optional):** where a logo is shown, it must be the SHD Systems logo at
   no less than legible size.
 

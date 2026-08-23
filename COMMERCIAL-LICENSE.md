@@ -42,5 +42,8 @@ the following AGPLv3 obligations:
 
 Contact **SHD Systems Ltd** to discuss commercial licensing.
 
-- Company: SHD Systems Ltd
-- Contact: *add sales/legal email and address before release*
+- Company: SHD Systems Ltd, registered in England and Wales, company number
+  17003359
+- Registered office: 13 Old Hall Road, Little Plumstead, Norwich, NR13 5FA,
+  United Kingdom
+- Contact: sales@shd-sim.com
