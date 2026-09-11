@@ -955,6 +955,38 @@ QString prettyModuleName(const QString &id)
     return out.replace(QLatin1Char('-'), QLatin1Char(' '));
 }
 
+// Which component's description speaks for the module.
+//
+// This used to be "the first one in the manifest", and the manifest is ordered
+// by the release's backend list, which puts the MESHER before the solvers that
+// depend on it. So Structural, Thermal and Electromagnetics all described
+// themselves as "Tetrahedral mesher for solid models" — three different physics
+// modules wearing Netgen's description, because Netgen happened to sort first.
+//
+// The manifest already knows which is which. A component that another component
+// in the same module `requires` is a dependency being dragged along; the one
+// nothing requires is the thing the user is actually choosing. Netgen is
+// required by both code_aster and Elmer, so it loses to either. For a module
+// with a single component — fluids, coupled, explicit — nothing changes.
+//
+// Falls back to the first non-empty description, so a module whose components
+// all require each other still says something rather than nothing.
+QString describeModule(const QList<shdkit::Component> &components)
+{
+    QStringList depended;
+    for (const shdkit::Component &c : components)
+        depended += c.requiresComponents;
+
+    for (const shdkit::Component &c : components) {
+        if (c.description.isEmpty()) continue;
+        if (depended.contains(c.name)) continue;
+        return c.description;
+    }
+    for (const shdkit::Component &c : components)
+        if (!c.description.isEmpty()) return c.description;
+    return {};
+}
+
 }  // namespace
 
 bool SetupWindow::loadModules(QString *whyNot)
@@ -1003,10 +1035,10 @@ bool SetupWindow::loadModules(QString *whyNot)
                 entry.embedded = true;
             }
             entry.components.append(c);
-            if (entry.description.isEmpty()) entry.description = c.description;
         }
 
         if (entry.components.isEmpty()) continue;
+        entry.description = describeModule(entry.components);
         // The first module in the manifest is on by default: somebody
         // installing a CFD product almost certainly wants the CFD solver, and
         // an installer whose every box is unticked invites a user to sail past
