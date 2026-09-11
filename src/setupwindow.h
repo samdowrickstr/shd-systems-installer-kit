@@ -42,8 +42,8 @@ struct AppEntry {
 // manifest said it serves it.
 struct ModuleEntry {
     QString id;                          // "fluids"
-    QString label;                       // "Fluids" — derived, or from the manifest
-    QString description;
+    QString label;                       // "Fluids" — ALWAYS derived from the id
+    QString description;                 // from the manifest; carries the meaning
     QList<shdkit::Component> components; // what to fetch if this is ticked
     bool defaultOn = false;
     bool embedded = false;               // already in the payload (offline build)

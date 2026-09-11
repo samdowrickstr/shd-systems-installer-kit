@@ -931,9 +931,22 @@ void SetupWindow::browseForFolder()
 
 namespace {
 
-// "fluids" -> "Fluids". Only a fallback: a manifest may carry a displayName,
-// and that always wins. This exists so a newly published module is legible
-// immediately rather than needing an installer change to get a capital letter.
+// "fluids" -> "Fluids". This is the ONLY source of a module's label.
+//
+// It used to say it was "only a fallback", and that a manifest displayName
+// "always wins". No such mechanism exists: `displayName` in a component.json is
+// the COMPONENT's name ("OpenRadioss latest-20260728"), and nothing reads a
+// display name for a module. Checked before this comment was rewritten —
+// entry.label is assigned here and nowhere else.
+//
+// So a newly published module is legible only to the extent its id capitalises
+// well. "fluids" and "structural" do; "explicit" and "coupled", added for the
+// 0.3.7 release, are jargon on their own. What rescues them is the component
+// DESCRIPTION, which does come from the manifest and is appended to this label
+// on the checkbox below — "Explicit — 158 MB (Explicit dynamics: impact and
+// drop test)". That is the string worth getting right when publishing a
+// backend, because it is the only part of this line an installer release does
+// not control.
 QString prettyModuleName(const QString &id)
 {
     if (id.isEmpty()) return id;
