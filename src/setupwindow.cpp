@@ -971,11 +971,28 @@ QString prettyModuleName(const QString &id)
 //
 // Falls back to the first non-empty description, so a module whose components
 // all require each other still says something rather than nothing.
-QString describeModule(const QList<shdkit::Component> &components)
+// A backend serving several modules cannot describe them all with one
+// sentence, so it may publish one per module. That is checked FIRST, and it is
+// the only thing that gets Acoustics right: Elmer serves electromagnetics,
+// thermal and acoustics, and by component description alone the Acoustics
+// checkbox read "Electromagnetics, radiation and induction heating".
+QString describeModule(const QString &id, const QList<shdkit::Component> &components)
 {
     QStringList depended;
     for (const shdkit::Component &c : components)
         depended += c.requiresComponents;
+
+    // A per-module sentence from the component that is not a dependency beats
+    // one from the mesher being dragged along.
+    for (const shdkit::Component &c : components) {
+        if (depended.contains(c.name)) continue;
+        const QString s = c.moduleDescriptions.value(id);
+        if (!s.isEmpty()) return s;
+    }
+    for (const shdkit::Component &c : components) {
+        const QString s = c.moduleDescriptions.value(id);
+        if (!s.isEmpty()) return s;
+    }
 
     for (const shdkit::Component &c : components) {
         if (c.description.isEmpty()) continue;
@@ -1038,7 +1055,7 @@ bool SetupWindow::loadModules(QString *whyNot)
         }
 
         if (entry.components.isEmpty()) continue;
-        entry.description = describeModule(entry.components);
+        entry.description = describeModule(id, entry.components);
         // The first module in the manifest is on by default: somebody
         // installing a CFD product almost certainly wants the CFD solver, and
         // an installer whose every box is unticked invites a user to sail past

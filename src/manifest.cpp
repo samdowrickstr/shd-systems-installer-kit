@@ -134,6 +134,12 @@ bool parseManifest(const QByteArray &json,
         c.objectKey = o.value(QStringLiteral("objectKey")).toString();
         c.displayName = o.value(QStringLiteral("displayName")).toString();
         c.description = o.value(QStringLiteral("description")).toString();
+        // Optional, and absent for every single-module backend. Missing is not
+        // an error: the module falls back to `description`, which for a backend
+        // that serves one module is the right sentence anyway.
+        const QJsonObject md = o.value(QStringLiteral("moduleDescriptions")).toObject();
+        for (auto it = md.constBegin(); it != md.constEnd(); ++it)
+            c.moduleDescriptions.insert(it.key(), it.value().toString());
         c.licenceUrl = o.value(QStringLiteral("licenceUrl")).toString();
         c.fetched = o.value(QStringLiteral("fetched")).toBool(false);
 

@@ -26,6 +26,7 @@
 // that file is right.
 
 #include <QByteArray>
+#include <QHash>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -45,6 +46,14 @@ struct Component {
     QString objectKey;    // key under the download base, not a full URL
     QString displayName;
     QString description;
+    // One sentence per module, for a backend serving more than one.
+    //
+    // `description` describes the component; the physics page needs a sentence
+    // per module. Elmer serves electromagnetics, thermal and acoustics, so its
+    // single description made the Acoustics checkbox read "Electromagnetics,
+    // radiation and induction heating". Keyed by module id; a module with no
+    // entry falls back to `description`.
+    QHash<QString, QString> moduleDescriptions;
     QString licenceUrl;
     bool fetched = false; // true when it comes over the network
 
